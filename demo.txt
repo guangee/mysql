@@ -1,0 +1,70 @@
+我在网上看见有项目是这样的结构，使用main.py作为统一调度入口，把不同的功能做成不同的子模块,
+请你结合我们当前的项目的脚本，在scripts目录下按照类似的结构来处理,把目录外的test.py,test2.py,test3.py
+的测试逻辑也直接在当前的scripts目录下进行实现，外面我们就不必保留测试脚本了,把scripts目录下多余的shell脚本都删除掉
+当前scripts目录下有重复的部分可以提取成为一个公共的函数
+
+my_toolkit/
+├── main.py
+├── core/
+│   ├── __init__.py
+│   ├── base.py
+│   ├── dispatcher.py
+│   └── config.py
+├── tasks/
+│   ├── __init__.py
+│   ├── category1/
+│   │   ├── __init__.py
+│   │   ├── task_a.py
+│   │   ├── task_b.py
+│   │   └── ...
+│   ├── category2/
+│   │   ├── __init__.py
+│   │   ├── task_c.py
+│   │   └── ...
+│   └── ...
+├── tests/                          # 测试根目录
+│   ├── __init__.py
+│   ├── conftest.py                 # pytest配置和fixture
+│   ├── unit/                       # 单元测试
+│   │   ├── __init__.py
+│   │   ├── test_base.py
+│   │   ├── test_dispatcher.py
+│   │   ├── test_category1/         # 第一类任务的单元测试
+│   │   │   ├── __init__.py
+│   │   │   ├── test_task_a.py
+│   │   │   ├── test_task_b.py
+│   │   │   └── ...
+│   │   ├── test_category2/         # 第二类任务的单元测试
+│   │   │   ├── __init__.py
+│   │   │   ├── test_task_c.py
+│   │   │   └── ...
+│   │   └── ...
+│   ├── integration/                # 集成测试
+│   │   ├── __init__.py
+│   │   ├── test_task_integration.py
+│   │   ├── test_dispatcher_integration.py
+│   │   └── ...
+│   ├── functional/                 # 功能测试
+│   │   ├── __init__.py
+│   │   ├── test_main_commands.py
+│   │   └── ...
+│   ├── fixtures/                   # 测试数据
+│   │   ├── test_data/
+│   │   │   ├── sample_input.txt
+│   │   │   ├── sample_config.json
+│   │   │   └── ...
+│   │   └── mock_responses/
+│   │       ├── api_response_1.json
+│   │       └── ...
+│   └── utils/                      # 测试工具
+│       ├── __init__.py
+│       ├── test_helpers.py
+│       ├── mock_objects.py
+│       └── assertions.py
+├── utils/
+├── data/
+├── requirements.txt
+├── requirements-test.txt           # 测试专用依赖
+├── pytest.ini                      # pytest配置
+├── .coveragerc                     # 覆盖率配置
+└── README.md

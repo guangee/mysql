@@ -38,19 +38,24 @@ start_backup_service() {
     mkdir -p /backups/full /backups/incremental
     
     # 启动备份调度服务（在后台运行）
-    /scripts/start-backup.sh &
+    /scripts/tasks/schedule/start_backup.py &
     
     echo "备份调度服务已启动"
     echo "=========================================="
 }
 
-# 如果命令是 mysqld，则启动 MySQL 和备份服务
-if [ "$1" = 'mysqld' ]; then
+# 如果命令是 mysqld 或者第一个参数以 -- 开头（MySQL 参数），则启动 MySQL 和备份服务
+if [ "$1" = 'mysqld' ] || [ "${1#--}" != "$1" ]; then
     # 在后台启动备份服务
     start_backup_service &
     
-    # 执行原始的 MySQL 入口点脚本
-    exec "$ORIGINAL_ENTRYPOINT" "$@"
+    # 如果第一个参数不是 mysqld，需要添加 mysqld 命令
+    if [ "$1" != 'mysqld' ]; then
+        exec "$ORIGINAL_ENTRYPOINT" mysqld "$@"
+    else
+        # 执行原始的 MySQL 入口点脚本
+        exec "$ORIGINAL_ENTRYPOINT" "$@"
+    fi
 else
     # 对于其他命令，直接执行原始入口点脚本
     exec "$ORIGINAL_ENTRYPOINT" "$@"

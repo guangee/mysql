@@ -6,4 +6,5 @@
 backups/
 mysql_data/
 mysql_config/
-
+.idea
+miniconda3/

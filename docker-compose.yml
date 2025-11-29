@@ -2,40 +2,72 @@ version: '3.8'
 
 services:
   mysql:
-    build:
-      context: .
-    container_name: mysql8044
+    image: zziaguan/mysql:8.0.35
+    container_name: mysql8035
     restart: unless-stopped
     environment:
       # MySQL 配置
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-testdb}
-      MYSQL_USER: ${MYSQL_USER:-testuser}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-testpass}
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+      # 备份配置：可以通过环境变量配置备份用的账号密码
+      # 如果未设置，将使用 MYSQL_USER 和 MYSQL_PASSWORD，最后默认使用 root 用户
+      # 备份用户需要 RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT, BACKUP_ADMIN 权限
+      # MYSQL_BACKUP_USER: root
+      # MYSQL_BACKUP_PASSWORD: rootpassword
       
       # S3 兼容对象存储配置
-      S3_BACKUP_ENABLED: ${S3_BACKUP_ENABLED:-true}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET: ${S3_BUCKET:-mysql-backups}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_USE_SSL: ${S3_USE_SSL:-true}
-      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
-      S3_ALIAS: ${S3_ALIAS:-s3}
+      # 是否启用 S3 备份 (true/false)
+      # 设置为 false 时，只进行本地备份，不会上传到 S3
+      S3_BACKUP_ENABLED: true
+      # 支持的对象存储: AWS S3, 阿里云 OSS, 腾讯云 COS, 华为云 OBS, 七牛云, MinIO 等
+      S3_ENDPOINT: 192.168.100.69:9000
+      S3_ACCESS_KEY: admin
+      S3_SECRET_KEY: minioPassword
+      S3_BUCKET: mysql
+      S3_REGION: us-east-1
+      # 是否使用 SSL/TLS (true/false)
+      S3_USE_SSL: false
+      # 是否使用路径样式访问 (某些对象存储需要设置为 true，如 MinIO)
+      S3_FORCE_PATH_STYLE: true
+      # S3 别名（用于 MinIO 客户端，默认为 s3）
+      S3_ALIAS: s3
       
       # 备份配置
       BACKUP_BASE_DIR: /backups
-      FULL_BACKUP_SCHEDULE: ${FULL_BACKUP_SCHEDULE:-0 2 * * 0}
-      INCREMENTAL_BACKUP_SCHEDULE: ${INCREMENTAL_BACKUP_SCHEDULE:-0 3 * * *}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
-      LOCAL_BACKUP_RETENTION_HOURS: ${LOCAL_BACKUP_RETENTION_HOURS:-0}
+      # Cron 格式: 分钟 小时 日 月 星期
+      # 每天凌晨 2 点执行全量备份
+      FULL_BACKUP_SCHEDULE: 0 2 * * *
+      # 每小时执行增量备份
+      INCREMENTAL_BACKUP_SCHEDULE: 0 * * * *
+      # 备份保留天数（超过此天数的备份将被自动清理）
+      BACKUP_RETENTION_DAYS: 14
+      # 本地备份保留时间（仅当 S3_BACKUP_ENABLED=true 时生效）
+      # 上传到 S3 后，本地备份文件保留的时间，单位：小时
+      # 设置为 0 表示上传成功后立即删除本地文件
+      # 注意: 当 S3_BACKUP_ENABLED=false 时，本地备份将永久保留，不会自动删除
+      LOCAL_BACKUP_RETENTION_HOURS: 0
+      
+      # 钉钉机器人通知配置
+      # 是否启用钉钉通知 (true/false)
+      DINGTALK_WEBHOOK_ENABLED: false
+      # 钉钉机器人 Webhook URL
+      # 格式: https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN
+      # 或者: https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN&timestamp=TIMESTAMP&sign=SIGN
+      DINGTALK_WEBHOOK_URL: https://oapi.dingtalk.com/robot/send?access_token=c0e169da6049bb9af0d1124f7c4e2c0b94dc27de79fd8463ce9b6d90b783ce2e
+      
+      # 时区配置（与宿主机保持一致）
+      TZ: Asia/Shanghai
     volumes:
       - ./mysql_data:/var/lib/mysql
       - ./mysql_config:/etc/mysql/conf.d
       - ./backups:/backups
+      # 映射宿主机的时间到容器，确保时间同步
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "3307:3306"
     networks:
       - backup-network
     entrypoint: ["/usr/local/bin/docker-entrypoint-with-backup.sh"]
@@ -43,11 +75,17 @@ services:
       # 将mysql8.0默认密码策略 修改为 原先 策略 (mysql8.0对其默认策略做了更改 会导致密码无法匹配)
       --default-authentication-plugin=mysql_native_password
       --log-bin=mysql-bin
+      --binlog-format=ROW
       --server-id=1
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_general_ci
       --explicit_defaults_for_timestamp=true
-      --lower_case_table_names=1
+      --bind-address=0.0.0.0
+      --default-time-zone='+08:00'
+      --binlog-expire-logs-seconds=2592000 # 二进制日志过期时间：30 天（2592000 秒，约1个月）
+      # 注意: lower_case_table_names 必须在初始化时设置，如果数据目录已存在且设置不同，会导致启动失败
+      # 如果需要使用 lower_case_table_names=1，需要重新初始化数据目录
+      # --lower_case_table_names=1
 
 networks:
   backup-network:
