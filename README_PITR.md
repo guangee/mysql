@@ -24,23 +24,62 @@
 
 ### 基本用法
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
 # 恢复到指定时间点（自动查找最新的全量备份和相关增量备份）
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "2025-11-26 14:30:00"
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00"
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+# 恢复到指定时间点（自动查找最新的全量备份和相关增量备份）
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00"
 ```
 
 ### 指定全量备份
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
 # 使用指定的全量备份
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "2025-11-26 14:30:00" 20251126_020000
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00" 20251126_020000
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+# 使用指定的全量备份
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00" 20251126_020000
 ```
 
 ### 指定全量备份和增量备份
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
 # 使用指定的全量备份和增量备份
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh \
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00" 20251126_020000 backup_20251126_030000.tar.gz backup_20251126_040000.tar.gz
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+# 使用指定的全量备份和增量备份
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/tasks/restore/point_in_time_restore.py \
   "2025-11-26 14:30:00" \
   20251126_020000 \
   backup_20251126_030000.tar.gz \
@@ -57,9 +96,22 @@ docker-compose stop mysql
 
 ### 2. 执行时间点恢复
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
 # 恢复到 2025-11-26 14:30:00
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "2025-11-26 14:30:00"
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00"
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+# 恢复到 2025-11-26 14:30:00
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00"
 ```
 
 ### 3. 启动 MySQL
@@ -184,7 +236,9 @@ TARGET_TIME=$(date -d "1 hour ago" "+%Y-%m-%d %H:%M:%S")
 
 # 执行恢复
 docker-compose stop mysql
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "$TARGET_TIME"
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "$TARGET_TIME"
 docker-compose start mysql
 ```
 
@@ -195,7 +249,9 @@ docker-compose start mysql
 ```bash
 # 恢复到 2025-11-26 14:30:00（某个事务执行之前）
 docker-compose stop mysql
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "2025-11-26 14:29:59"
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:29:59"
 docker-compose start mysql
 ```
 
@@ -205,15 +261,19 @@ docker-compose start mysql
 # 恢复到昨天 14:30:00
 YESTERDAY=$(date -d "yesterday" "+%Y-%m-%d")
 docker-compose stop mysql
-docker-compose run --rm mysql /scripts/point-in-time-restore.sh "$YESTERDAY 14:30:00"
+docker-compose run --rm \
+  -e RESTORE_TZ="Asia/Shanghai" \
+  mysql python3 /scripts/main.py restore pitr "$YESTERDAY 14:30:00"
 docker-compose start mysql
 ```
 
 ## 相关脚本
 
-- `point-in-time-restore.sh` - 时间点恢复脚本
-- `restore-backup.sh` - 普通备份恢复脚本
-- `apply-restore.sh` - 应用恢复脚本
-- `full-backup.sh` - 全量备份脚本
-- `incremental-backup.sh` - 增量备份脚本
+- `point_in_time_restore.py` - 时间点恢复脚本（Python）
+- `restore_backup.py` - 普通备份恢复脚本（Python）
+- `apply_restore.py` - 应用恢复脚本（Python）
+- `full_backup.py` - 全量备份脚本（Python）
+- `incremental_backup.py` - 增量备份脚本（Python）
+
+**注意**：所有脚本已从 Shell 迁移到 Python，请使用 Python 版本。
 

@@ -28,7 +28,7 @@
   - `products`: 5条记录
 
 ### 步骤5: 执行全量备份 (`perform_backup`)
-- **操作**: 执行 `docker exec mysql8044 /scripts/full-backup.sh`
+- **操作**: 执行 `docker exec mysql8044 python3 /scripts/main.py backup full` 或 `docker exec mysql8044 python3 /scripts/tasks/backup/full_backup.py`
 - **目的**: 创建全量备份（包含步骤4的所有数据）
 - **备份内容**: 
   - `test_table`: 5条记录
@@ -39,7 +39,7 @@
 - **操作**: 
   1. 向 `test_table` 添加2条新记录（总数变为7条）
   2. 向 `products` 添加2条新记录（总数变为7条）
-  3. 执行 `docker exec mysql8044 /scripts/incremental-backup.sh`
+  3. 执行 `docker exec mysql8044 python3 /scripts/main.py backup incremental` 或 `docker exec mysql8044 python3 /scripts/tasks/backup/incremental_backup.py`
 - **目的**: 测试增量备份功能
 - **数据状态**: 
   - `test_table`: 7条记录
@@ -114,7 +114,8 @@
 #### 10.4 停止MySQL并执行时间点恢复
 - **操作**: 
   1. `docker-compose stop mysql`
-  2. `docker-compose run --rm mysql /scripts/point-in-time-restore.sh "2025-11-27 11:17:50"`
+  2. **方式 A（推荐）**: `docker-compose run --rm -e RESTORE_TZ="Asia/Shanghai" mysql python3 /scripts/main.py restore pitr "2025-11-27 11:17:50"`
+  3. **方式 B**: `docker-compose run --rm -e RESTORE_TZ="Asia/Shanghai" mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-27 11:17:50"`
 - **目的**: 执行时间点恢复脚本
 - **恢复脚本操作**:
   1. 查找最新的全量备份

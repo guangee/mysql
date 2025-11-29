@@ -107,9 +107,9 @@ INSERT INTO `db`.`table` VALUES (val1, val2, val3, ...)
 
 ## 当前代码位置
 
-- **测试脚本**：`test.sh` (第1087-1111行)
-- **恢复脚本**：`scripts/point-in-time-restore.sh`
-- **通用脚本**：`scripts/apply_binlog_universal.sh` (新建)
+- **测试脚本**：`test.py` (Python 版本)
+- **恢复脚本**：`scripts/tasks/restore/point_in_time_restore.py` (Python 版本)
+- **通用脚本**：`scripts/tasks/binlog/apply_binlog_universal.py` (Python 版本)
 
 ## 使用示例
 
@@ -122,7 +122,7 @@ awk '/^### INSERT INTO.*timestamp_test/ { ... }'
 ### 改进后（通用）：
 ```bash
 # 恢复所有表
-bash scripts/apply_binlog_universal.sh \
+docker-compose exec mysql python3 /scripts/tasks/binlog/apply_binlog_universal.py \
     /backups/binlog_backup_*/mysql-bin.000004 \
     '2025-11-27 16:15:54' \
     testdb

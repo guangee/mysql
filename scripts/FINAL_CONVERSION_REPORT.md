@@ -82,11 +82,14 @@
 所有 Python 脚本可以直接替换原 Shell 脚本使用：
 
 ```bash
-# 原方式
+# 原方式（Shell 脚本，已废弃）
 docker-compose exec mysql /scripts/full-backup.sh
 
-# 新方式（完全等价）
-docker-compose exec mysql /scripts/full_backup.py
+# 新方式1：使用统一入口（推荐）
+docker-compose exec mysql python3 /scripts/main.py backup full
+
+# 新方式2：直接调用 Python 脚本（完全等价）
+docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
 ```
 
 ### 测试脚本已更新

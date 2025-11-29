@@ -86,12 +86,17 @@ python3 -m py_compile /root/mysql/scripts/*.py
 
 Python脚本可以直接替换原Shell脚本使用，例如：
 
-**原方式:**
+**原方式（Shell 脚本，已废弃）:**
 ```bash
 docker-compose exec mysql /scripts/full-backup.sh
 ```
 
-**新方式:**
+**新方式1：使用统一入口（推荐）:**
+```bash
+docker-compose exec mysql python3 /scripts/main.py backup full
+```
+
+**新方式2：直接调用 Python 脚本:**
 ```bash
 docker-compose exec mysql /scripts/full_backup.py
 ```

@@ -103,14 +103,30 @@ docker-compose restart mysql
 
 ### 方式二：手动执行全量备份
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
-docker-compose exec mysql /scripts/full-backup.sh
+docker-compose exec mysql python3 /scripts/main.py backup full
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
 ```
 
 ### 方式三：手动执行增量备份
 
+**方式 A：使用统一入口（推荐）**
+
 ```bash
-docker-compose exec mysql /scripts/incremental-backup.sh
+docker-compose exec mysql python3 /scripts/main.py backup incremental
+```
+
+**方式 B：直接调用 Python 脚本**
+
+```bash
+docker-compose exec mysql python3 /scripts/tasks/backup/incremental_backup.py
 ```
 
 **注意**：增量备份需要先有全量备份作为基础。
@@ -475,7 +491,11 @@ docker-compose exec mysql mc ls -lh s3/mysql-backups/full/
 
 ```bash
 # 手动清理旧备份（根据 BACKUP_RETENTION_DAYS 配置）
-docker-compose exec mysql /scripts/cleanup-old-backups.sh
+# 使用统一入口（推荐）
+docker-compose exec mysql python3 /scripts/main.py backup cleanup
+
+# 或直接调用 Python 脚本
+docker-compose exec mysql python3 /scripts/tasks/backup/cleanup_old_backups.py
 ```
 
 ## 故障排查
@@ -505,7 +525,11 @@ docker-compose exec mysql /scripts/cleanup-old-backups.sh
 
 1. **手动执行一次全量备份**：
    ```bash
-   docker-compose exec mysql /scripts/full-backup.sh
+   # 使用统一入口（推荐）
+   docker-compose exec mysql python3 /scripts/main.py backup full
+   
+   # 或直接调用 Python 脚本
+   docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
    ```
 
 2. **检查基础备份文件**：
@@ -527,7 +551,11 @@ docker-compose exec mysql /scripts/cleanup-old-backups.sh
 
 3. **手动测试备份脚本**：
    ```bash
-   docker-compose exec mysql /scripts/full-backup.sh
+   # 使用统一入口（推荐）
+   docker-compose exec mysql python3 /scripts/main.py backup full
+   
+   # 或直接调用 Python 脚本
+   docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
    ```
 
 ### 恢复失败
