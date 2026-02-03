@@ -28,4 +28,4 @@ jobs:
       - name: build image
         run: |
           export docker_hub_username=${{ secrets.DOCKER_USERNAME }}
-          ./build.sh mysql:8.0.35     ./
+          ./build.sh mysql-s3:8.0.35     ./
