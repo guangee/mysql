@@ -17,6 +17,16 @@ FULL_BACKUP_SCHEDULE = os.environ.get("FULL_BACKUP_SCHEDULE", "0 2 * * 0")
 INCREMENTAL_BACKUP_SCHEDULE = os.environ.get("INCREMENTAL_BACKUP_SCHEDULE", "0 3 * * *")
 BACKUP_BASE_DIR = Path(os.environ.get("BACKUP_BASE_DIR", "/backups"))
 
+# 需要注入到 crontab 的环境变量（cron 默认环境极少，备份脚本依赖这些变量）
+CRON_ENV_VARS = [
+    "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_BACKUP_ENABLED",
+    "S3_REGION", "S3_USE_SSL", "S3_FORCE_PATH_STYLE", "S3_ALIAS",
+    "MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_ROOT_PASSWORD",
+    "MYSQL_BACKUP_USER", "MYSQL_BACKUP_PASSWORD",
+    "BACKUP_BASE_DIR", "LOCAL_BACKUP_RETENTION_HOURS", "BACKUP_RETENTION_DAYS",
+    "TZ",
+]
+
 def log(message: str):
     """记录日志"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -52,21 +62,41 @@ def main():
     except Exception:
         existing_crontab = ""
     
-    # 清除现有的备份相关 cron 任务
+    # 清除现有的备份相关 cron 任务（按脚本路径匹配：full_backup / incremental_backup / cleanup_old_backups）
     new_crontab_lines = []
     for line in existing_crontab.split('\n'):
-        if 'full-backup' not in line and 'incremental-backup' not in line and 'cleanup-old-backups' not in line:
+        if 'full_backup' not in line and 'incremental_backup' not in line and 'cleanup_old_backups' not in line:
             if line.strip():
                 new_crontab_lines.append(line)
     
-    # 添加全量备份任务
-    new_crontab_lines.append(f"{FULL_BACKUP_SCHEDULE} /scripts/tasks/backup/full_backup.py >> {BACKUP_BASE_DIR}/backup.log 2>&1")
+    # 写入 env 文件，cron 执行时通过 source 加载（crontab 内 VAR=value 在某些环境下不生效）
+    env_file = BACKUP_BASE_DIR / "backup.env"
+    env_count = 0
+    try:
+        with open(env_file, "w", encoding="utf-8") as f:
+            f.write("# 备份任务环境变量，由 start_backup 生成，cron 执行前 source 此文件\n")
+            for var in CRON_ENV_VARS:
+                val = os.environ.get(var)
+                if val is not None and str(val).strip() != "":
+                    # 单引号包裹，值内单引号改为 '\''
+                    safe = str(val).replace("\\", "\\\\").replace("'", "'\"'\"'").replace("\n", " ").strip()
+                    f.write(f"export {var}='{safe}'\n")
+                    env_count += 1
+        log(f"[调度] 已写入 {env_count} 个环境变量到 {env_file}，cron 将通过 source 加载")
+    except Exception as e:
+        log(f"警告: 写入 {env_file} 失败: {e}")
+    
+    # cron 任务使用 . backup.env && script 确保脚本能拿到环境变量
+    source_cmd = f". {env_file} &&"
+    
+    # 添加全量备份任务（执行前 source env）
+    new_crontab_lines.append(f"{FULL_BACKUP_SCHEDULE} {source_cmd} /scripts/tasks/backup/full_backup.py >> {BACKUP_BASE_DIR}/backup.log 2>&1")
     
     # 添加增量备份任务
-    new_crontab_lines.append(f"{INCREMENTAL_BACKUP_SCHEDULE} /scripts/tasks/backup/incremental_backup.py >> {BACKUP_BASE_DIR}/backup.log 2>&1")
+    new_crontab_lines.append(f"{INCREMENTAL_BACKUP_SCHEDULE} {source_cmd} /scripts/tasks/backup/incremental_backup.py >> {BACKUP_BASE_DIR}/backup.log 2>&1")
     
     # 添加本地过期备份清理任务（每小时执行一次，只清理本地）
-    new_crontab_lines.append(f"0 * * * * /scripts/tasks/backup/cleanup_old_backups.py --local-only >> {BACKUP_BASE_DIR}/backup.log 2>&1")
+    new_crontab_lines.append(f"0 * * * * {source_cmd} /scripts/tasks/backup/cleanup_old_backups.py --local-only >> {BACKUP_BASE_DIR}/backup.log 2>&1")
     
     # 写入新的 crontab
     new_crontab = '\n'.join(new_crontab_lines) + '\n'
@@ -84,11 +114,11 @@ def main():
     
     log("备份计划任务已配置:")
     log(f"  全量备份: {FULL_BACKUP_SCHEDULE}")
-    log(f"  增量备份: {INCREMENTAL_BACKUP_SCHEDULE}")
+    log(f"  增量备份: {INCREMENTAL_BACKUP_SCHEDULE} （每分钟执行，便于排查）")
     log("  本地过期备份清理: 每小时执行一次")
     
-    # 显示 cron 任务
-    log("当前 cron 任务:")
+    # 输出完整 crontab 便于排查（敏感值已存在 env 中，此处仅确认任务行）
+    log("当前 crontab 中的备份任务行:")
     try:
         result = subprocess.run(
             ["crontab", "-l"],
@@ -98,10 +128,16 @@ def main():
         )
         if result.returncode == 0:
             for line in result.stdout.split('\n'):
-                if 'full_backup' in line or 'incremental_backup' in line:
-                    log(f"  {line}")
-    except Exception:
-        pass
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if 'full_backup' in line or 'incremental_backup' in line or 'cleanup_old_backups' in line:
+                    log(f"  [cron] {line}")
+            log(f"  [cron] 以上任务通过 source {env_file} 加载环境变量（S3_ENDPOINT 等）")
+        else:
+            log(f"  [cron] 读取 crontab 失败 returncode={result.returncode} stderr={result.stderr}")
+    except Exception as e:
+        log(f"  [cron] 读取 crontab 异常: {e}")
     
     # 启动 cron 服务
     log("启动 cron 服务...")
@@ -145,10 +181,8 @@ def main():
     while True:
         time.sleep(60)
         heartbeat_count += 1
-        
-        # 每10分钟输出一次心跳日志（避免日志过多）
-        if heartbeat_count % 10 == 0:
-            log(f"备份调度服务运行中... (已运行 {heartbeat_count // 10} 分钟)")
+        # 每分钟输出心跳，便于确认调度进程存活及下次增量时间
+        log(f"[心跳] 备份调度运行中，已运行 {heartbeat_count} 分钟 | 增量备份: 每 1 分钟执行，请查看 backup.log 确认是否被 cron 触发")
         
         # 检查 MySQL 进程是否还在运行
         try:

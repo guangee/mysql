@@ -385,6 +385,7 @@ def send_dingtalk_notify(status: str, message: str):
 def main():
     """主函数"""
     log("========== 增量备份开始 ==========")
+    log(f"[增量备份] 脚本被触发 PID={os.getpid()} | S3_ENDPOINT={os.environ.get('S3_ENDPOINT', '(未设置)')} | BACKUP_BASE_DIR={os.environ.get('BACKUP_BASE_DIR', '(未设置)')}")
     
     # 如果启用了 S3 备份，配置 S3 客户端
     if S3_BACKUP_ENABLED:

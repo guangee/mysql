@@ -1,13 +1,33 @@
 version: '3.8'
 
 services:
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: minioPassword
+    command: minio server /data --console-address ":9001"
+    volumes:
+      - ./minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web 控制台
+    networks:
+      - backup-network
+
   mysql:
     image: zziaguan/mysql:8.0.35
     container_name: mysql8035
+    build:
+      context: ./
     restart: unless-stopped
+    depends_on:
+      - minio
     environment:
       # MySQL 配置
-      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: testdb
       MYSQL_USER: testuser
       MYSQL_PASSWORD: testpass
@@ -22,7 +42,7 @@ services:
       # 设置为 false 时，只进行本地备份，不会上传到 S3
       S3_BACKUP_ENABLED: true
       # 支持的对象存储: AWS S3, 阿里云 OSS, 腾讯云 COS, 华为云 OBS, 七牛云, MinIO 等
-      S3_ENDPOINT: 192.168.100.69:9000
+      S3_ENDPOINT: minio:9000
       S3_ACCESS_KEY: admin
       S3_SECRET_KEY: minioPassword
       S3_BUCKET: mysql
@@ -36,11 +56,11 @@ services:
       
       # 备份配置
       BACKUP_BASE_DIR: /backups
-      # Cron 格式: 分钟 小时 日 月 星期
-      # 每天凌晨 2 点执行全量备份
-      FULL_BACKUP_SCHEDULE: 0 2 * * *
-      # 每小时执行增量备份
-      INCREMENTAL_BACKUP_SCHEDULE: 0 * * * *
+      # Cron 格式: 分钟 小时 日 月 星期（当前为测试环境配置）
+      # 每 5 分钟执行全量备份（测试用，生产请改为 0 2 * * * 每天凌晨 2 点）
+      FULL_BACKUP_SCHEDULE: "*/5 * * * *"
+      # 每 1 分钟执行增量备份（测试用，生产请改为 */10 或 0 * * * *）
+      INCREMENTAL_BACKUP_SCHEDULE: "* * * * *"
       # 备份保留天数（超过此天数的备份将被自动清理）
       BACKUP_RETENTION_DAYS: 14
       # 本地备份保留时间（仅当 S3_BACKUP_ENABLED=true 时生效）
@@ -67,7 +87,7 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     ports:
-      - "3307:3306"
+      - "3306:3306"
     networks:
       - backup-network
     entrypoint: ["/usr/local/bin/docker-entrypoint-with-backup.sh"]
