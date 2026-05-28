@@ -15,6 +15,11 @@ from pathlib import Path
 # 配置变量
 FULL_BACKUP_SCHEDULE = os.environ.get("FULL_BACKUP_SCHEDULE", "0 2 * * 0")
 INCREMENTAL_BACKUP_SCHEDULE = os.environ.get("INCREMENTAL_BACKUP_SCHEDULE", "0 3 * * *")
+LOCAL_BACKUP_RETENTION_HOURS = int(os.environ.get("LOCAL_BACKUP_RETENTION_HOURS", "0"))
+CLEANUP_LOCAL_SCHEDULE = os.environ.get(
+    "CLEANUP_LOCAL_SCHEDULE",
+    "* * * * *" if LOCAL_BACKUP_RETENTION_HOURS == 0 else "0 * * * *",
+)
 BACKUP_BASE_DIR = Path(os.environ.get("BACKUP_BASE_DIR", "/backups"))
 
 # 需要注入到 crontab 的环境变量（cron 默认环境极少，备份脚本依赖这些变量）
@@ -23,7 +28,7 @@ CRON_ENV_VARS = [
     "S3_REGION", "S3_USE_SSL", "S3_FORCE_PATH_STYLE", "S3_ALIAS",
     "MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_ROOT_PASSWORD",
     "MYSQL_BACKUP_USER", "MYSQL_BACKUP_PASSWORD",
-    "BACKUP_BASE_DIR", "LOCAL_BACKUP_RETENTION_HOURS", "BACKUP_RETENTION_DAYS",
+    "BACKUP_BASE_DIR", "LOCAL_BACKUP_RETENTION_HOURS", "BACKUP_RETENTION_DAYS", "CLEANUP_LOCAL_SCHEDULE",
     "TZ",
 ]
 
@@ -96,7 +101,7 @@ def main():
     new_crontab_lines.append(f"{INCREMENTAL_BACKUP_SCHEDULE} {source_cmd} /scripts/tasks/backup/incremental_backup.py >> {BACKUP_BASE_DIR}/backup.log 2>&1")
     
     # 添加本地过期备份清理任务（每小时执行一次，只清理本地）
-    new_crontab_lines.append(f"0 * * * * {source_cmd} /scripts/tasks/backup/cleanup_old_backups.py --local-only >> {BACKUP_BASE_DIR}/backup.log 2>&1")
+    new_crontab_lines.append(f"{CLEANUP_LOCAL_SCHEDULE} {source_cmd} /scripts/tasks/backup/cleanup_old_backups.py --local-only >> {BACKUP_BASE_DIR}/backup.log 2>&1")
     
     # 写入新的 crontab
     new_crontab = '\n'.join(new_crontab_lines) + '\n'
@@ -115,7 +120,7 @@ def main():
     log("备份计划任务已配置:")
     log(f"  全量备份: {FULL_BACKUP_SCHEDULE}")
     log(f"  增量备份: {INCREMENTAL_BACKUP_SCHEDULE} （每分钟执行，便于排查）")
-    log("  本地过期备份清理: 每小时执行一次")
+    log(f"  本地过期备份清理: {CLEANUP_LOCAL_SCHEDULE}")
     
     # 输出完整 crontab 便于排查（敏感值已存在 env 中，此处仅确认任务行）
     log("当前 crontab 中的备份任务行:")

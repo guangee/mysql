@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 USER root
 ENV ANDROID_HOME=/opt/android
-ENV MYSQL_VERSION=8.0.35
+ENV MYSQL_VERSION=8.0.46
 ENV LANG=C.UTF-8
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -45,10 +45,10 @@ RUN wget https://repo.percona.com/apt/percona-release_latest.generic_all.deb \
 RUN wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc \
     && chmod +x /usr/local/bin/mc
 
-# 安装 MySQL 8.0.44（手动下载指定版本）
+# 安装 MySQL 8.0.46（手动下载指定版本）
 RUN set -eux; \
-    # 下载 MySQL 8.0.44 的 deb bundle
-    MYSQL_VERSION="${MYSQL_VERSION:-8.0.44}"; \
+    # 下载 MySQL 8.0.46 的 deb bundle
+    MYSQL_VERSION="${MYSQL_VERSION:-8.0.46}"; \
     MYSQL_DEB_BUNDLE="mysql-server_${MYSQL_VERSION}-1ubuntu22.04_amd64.deb-bundle.tar"; \
     MYSQL_DOWNLOAD_URL="https://dev.mysql.com/get/Downloads/MySQL-8.0/${MYSQL_DEB_BUNDLE}"; \
     echo "下载 MySQL ${MYSQL_VERSION} 安装包..."; \

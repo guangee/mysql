@@ -10,9 +10,15 @@ import sys
 import subprocess
 import shutil
 import tarfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.backup_storage import (
+    apply_local_retention,
+    setup_s3 as setup_s3_storage,
+    upload_and_verify,
+)
 
 # 配置变量
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
@@ -58,43 +64,6 @@ def log(message: str):
             f.write(log_message + "\n")
     except Exception:
         pass  # 忽略日志写入错误
-
-def setup_s3():
-    """配置 S3 客户端"""
-    log("配置 S3 兼容对象存储客户端...")
-    
-    # 验证必要的配置
-    if not S3_ENDPOINT or not S3_ACCESS_KEY or not S3_SECRET_KEY:
-        log("错误: S3 配置不完整，请设置 S3_ENDPOINT, S3_ACCESS_KEY 和 S3_SECRET_KEY")
-        sys.exit(1)
-    
-    # 构建 S3 URL
-    if S3_USE_SSL:
-        s3_url = f"https://{S3_ENDPOINT}"
-    else:
-        s3_url = f"http://{S3_ENDPOINT}"
-    
-    # 配置 S3 别名
-    try:
-        subprocess.run(
-            ["mc", "alias", "set", S3_ALIAS, s3_url, S3_ACCESS_KEY, S3_SECRET_KEY, "--api", "s3v4"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass  # 忽略错误
-    
-    # 创建存储桶（如果不存在）
-    try:
-        subprocess.run(
-            ["mc", "mb", f"{S3_ALIAS}/{S3_BUCKET}"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass  # 忽略错误
-    
-    log(f"S3 配置完成 (Endpoint: {S3_ENDPOINT}, Bucket: {S3_BUCKET})")
 
 def perform_full_backup():
     """执行全量备份"""
@@ -228,49 +197,26 @@ def perform_full_backup():
     if S3_BACKUP_ENABLED:
         log("S3 备份已启用，开始上传备份到 S3...")
         s3_path = f"{S3_ALIAS}/{S3_BUCKET}/full/backup_{TIMESTAMP}.tar.gz"
-        log(f"上传文件: {backup_tar} -> {s3_path}")
-        
+
+        if not upload_and_verify(backup_tar, s3_path, log):
+            log("错误: 上传校验失败，保留本地备份")
+            return 1
+
+        log(f"备份成功上传到 S3 并校验通过: backup_{TIMESTAMP}.tar.gz")
+
+        # 将元数据上传到 S3
         try:
-            result = subprocess.run(
-                ["mc", "cp", str(backup_tar), s3_path],
-                check=True,
+            subprocess.run(
+                ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_full_backup_timestamp.txt"],
+                input=TIMESTAMP,
+                text=True,
+                check=False,
                 capture_output=True,
-                text=True
             )
-            if result.stdout:
-                for line in result.stdout.split('\n'):
-                    if line.strip():
-                        log(f"mc: {line}")
-            
-            log(f"备份成功上传到 S3: backup_{TIMESTAMP}.tar.gz")
-            
-            # 将元数据上传到 S3
-            try:
-                subprocess.run(
-                    ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_full_backup_timestamp.txt"],
-                    input=TIMESTAMP,
-                    text=True,
-                    check=False,
-                    capture_output=True
-                )
-            except Exception:
-                pass  # 忽略元数据上传错误
-            
-            # 处理本地备份文件保留策略
-            if LOCAL_BACKUP_RETENTION_HOURS == 0:
-                # 立即删除本地备份文件
-                shutil.rmtree(FULL_BACKUP_DIR, ignore_errors=True)
-                log("本地备份文件已清理（立即删除模式）")
-            else:
-                # 记录删除时间
-                delete_time = int((datetime.now() + timedelta(hours=LOCAL_BACKUP_RETENTION_HOURS)).timestamp())
-                (FULL_BACKUP_DIR / ".delete_after").write_text(str(delete_time))
-                delete_time_str = (datetime.now() + timedelta(hours=LOCAL_BACKUP_RETENTION_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-                log(f"本地备份文件将保留 {LOCAL_BACKUP_RETENTION_HOURS} 小时，预计删除时间: {delete_time_str}")
-        except subprocess.CalledProcessError as e:
-            log("错误: 上传到 S3 失败，保留本地备份")
-            if e.stderr:
-                log(f"错误详情: {e.stderr}")
+        except Exception:
+            pass  # 忽略元数据上传错误
+
+        if not apply_local_retention(FULL_BACKUP_DIR, verified=True, log=log):
             return 1
     else:
         log("S3 备份已禁用，仅保留本地备份")
@@ -306,7 +252,9 @@ def main():
     
     # 如果启用了 S3 备份，配置 S3 客户端
     if S3_BACKUP_ENABLED:
-        setup_s3()
+        log("配置 S3 兼容对象存储客户端...")
+        if not setup_s3_storage(log):
+            sys.exit(1)
     else:
         log("S3 备份已禁用，跳过 S3 配置")
     

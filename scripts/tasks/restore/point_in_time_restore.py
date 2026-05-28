@@ -196,6 +196,55 @@ def download_incremental_backup_from_s3(timestamp: str, target_dir: Path) -> boo
         log(f"错误: 从 S3 下载备份失败: {e}")
         return False
 
+def list_full_backup_timestamps_from_s3(before_timestamp: Optional[str] = None) -> list:
+    """列出 S3 上的全量备份时间戳"""
+    timestamps = []
+    if not setup_s3_if_needed():
+        return timestamps
+    try:
+        result = subprocess.run(
+            ["mc", "ls", f"{S3_ALIAS}/{S3_BUCKET}/full/"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 6:
+                    match = re.match(r"^backup_(\d{8}_\d{6})\.tar\.gz$", parts[5])
+                    if match:
+                        ts = match.group(1)
+                        if before_timestamp is None or ts <= before_timestamp:
+                            timestamps.append(ts)
+    except Exception:
+        pass
+    return timestamps
+
+def find_full_backup_for_incremental(inc_timestamp: str) -> Optional[str]:
+    """查找增量备份对应的全量基线（本地或 S3）"""
+    candidates = []
+    full_dir = BACKUP_BASE_DIR / "full"
+    if full_dir.exists():
+        for backup_dir in full_dir.iterdir():
+            if backup_dir.is_dir() and re.match(r"^\d{8}_\d{6}$", backup_dir.name):
+                if backup_dir.name <= inc_timestamp:
+                    candidates.append(backup_dir.name)
+
+    marker = BACKUP_BASE_DIR / "LATEST_FULL_BACKUP_TIMESTAMP"
+    if marker.exists():
+        try:
+            ts = marker.read_text().strip()
+            if re.match(r"^\d{8}_\d{6}$", ts) and ts <= inc_timestamp:
+                candidates.append(ts)
+        except Exception:
+            pass
+
+    candidates.extend(list_full_backup_timestamps_from_s3(before_timestamp=inc_timestamp))
+    if not candidates:
+        return None
+    return sorted(set(candidates), reverse=True)[0]
+
 def find_latest_backup_before_target(target_datetime: str) -> Tuple[str, str]:
     """查找目标时间之前的最新备份（全量或增量）
 
@@ -893,26 +942,12 @@ def restore_to_point_in_time(target_datetime: str, full_backup_timestamp: Option
 
     # 处理不同类型的备份
     if backup_type == "incremental":
-        # 如果找到的是增量备份，这已经是目标时间之前的最新状态
-        # 我们需要找到这个增量备份对应的全量备份，然后应用这个增量备份
-        # 对于增量备份，我们需要找到对应的全量备份作为基础
-        # 通常增量备份基于最新的全量备份，这里查找所有全量备份中的最新一个
-        full_backups = []
-        full_dir = BACKUP_BASE_DIR / "full"
-        if full_dir.exists():
-            for backup_dir in full_dir.iterdir():
-                if backup_dir.is_dir():
-                    dir_name = backup_dir.name
-                    if re.match(r'^\d{8}_\d{6}$', dir_name):
-                        full_backups.append(dir_name)
-
-        if full_backups:
-            full_backups.sort(reverse=True)
-            full_backup_timestamp = full_backups[0]
+        full_backup_timestamp = find_full_backup_for_incremental(backup_timestamp)
+        if full_backup_timestamp:
             log(f"为增量备份找到对应的全量备份基础: {full_backup_timestamp}")
         else:
             error_exit("未找到全量备份，无法应用增量备份")
-        incremental_backups = [str(BACKUP_BASE_DIR / "incremental" / backup_timestamp)]  # 只应用这一个增量备份
+        incremental_backups = [str(BACKUP_BASE_DIR / "incremental" / backup_timestamp)]
         log(f"使用增量备份 {backup_timestamp} 进行恢复（基于全量备份 {full_backup_timestamp}）")
     else:
         # 全量备份

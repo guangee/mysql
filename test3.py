@@ -13,7 +13,7 @@ test3.py - 测试在两次增量备份之间进行 PITR 恢复的场景
 8. 增量备份 #2
 9. 执行更多数据操作（模拟误操作）
 10. 停止 MySQL
-11. 使用 docker-compose 执行 PITR 恢复
+11. 使用 docker compose 执行 PITR 恢复
 12. 重启 MySQL
 13. 验证 MD5
 """
@@ -42,11 +42,11 @@ except ImportError:
         sys.exit(1)
 
 # 配置
-CONTAINER_NAME = "mysql8035"
-MYSQL_ROOT_PASSWORD = "rootpassword"
+CONTAINER_NAME = "mysql8046"
+MYSQL_ROOT_PASSWORD = "root"
 MYSQL_DATABASE = "testdb"
-MYSQL_PORT = "3307"
-IMAGE_NAME = "zziaguan/mysql:8.0.35"
+MYSQL_PORT = "3306"
+IMAGE_NAME = "zziaguan/mysql:8.0.46"
 TZ_REGION = "Asia/Shanghai"
 
 TABLES = ["customers", "orders", "inventory", "audit_logs", "metrics"]
@@ -160,8 +160,8 @@ def start_environment():
         # 容器存在，启动它
         run_cmd(["docker", "start", CONTAINER_NAME])
     else:
-        # 容器不存在，使用docker-compose启动
-        run_cmd(["docker-compose", "up", "-d"])
+        # 容器不存在，使用docker compose启动
+        run_cmd(["docker", "compose", "up", "-d"])
     
     wait_for_mysql()
 
@@ -1028,7 +1028,7 @@ def main():
     
     # 显示可用命令
     # log_step("显示可用命令")
-    # cmd = ["docker-compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "help"]
+    # cmd = ["docker compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "help"]
     # log_info(f"[命令] {' '.join(cmd)}")
     # print("")
     # run_cmd(cmd, check=False)

@@ -25,11 +25,11 @@ from datetime import datetime
 from pathlib import Path
 
 # 配置
-CONTAINER_NAME = "mysql8035"
-MYSQL_ROOT_PASSWORD = "rootpassword"
+CONTAINER_NAME = "mysql8046"
+MYSQL_ROOT_PASSWORD = "root"
 MYSQL_DATABASE = "testdb"
-MYSQL_PORT = "3307"
-IMAGE_NAME = "zziaguan/mysql:8.0.35"
+MYSQL_PORT = "3306"
+IMAGE_NAME = "zziaguan/mysql:8.0.46"
 TZ_REGION = "Asia/Shanghai"
 
 TABLES = ["customers", "orders", "inventory", "audit_logs", "metrics"]
@@ -100,6 +100,19 @@ def wait_for_mysql():
     log_error("MySQL 启动超时")
     sys.exit(1)
 
+def disable_scheduled_backups():
+    """测试期间禁用 cron 定时备份，避免与手动备份/PITR 冲突"""
+    log_info("禁用容器内定时备份（测试改用手动触发）...")
+    subprocess.run(
+        [
+            "docker", "exec", CONTAINER_NAME, "bash", "-c",
+            "crontab -l 2>/dev/null | grep -vE 'full_backup|incremental_backup|cleanup_old_backups' > /tmp/cron.test; "
+            "if [ -s /tmp/cron.test ]; then crontab /tmp/cron.test; else crontab -r 2>/dev/null || true; fi",
+        ],
+        check=False,
+    )
+    log_success("已禁用定时备份")
+
 def build_image():
     """重新构建Docker镜像"""
     log_step("0. 重新构建 Docker 镜像")
@@ -117,7 +130,7 @@ def start_environment():
     log_step("1. 初始化环境")
     
     log_info("停止并删除容器...")
-    cmd = ["docker-compose", "down", "-v"]
+    cmd = ["docker", "compose", "down", "-v"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, capture_output=True, check=False)
     
@@ -156,10 +169,11 @@ def start_environment():
     log_info("目录清理完成，保留目录结构以维持Docker volume映射")
     
     log_info("启动容器...")
-    cmd = ["docker-compose", "up", "-d"]
+    cmd = ["docker", "compose", "up", "-d"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
     wait_for_mysql()
+    disable_scheduled_backups()
 
 def create_tables_and_seed():
     """创建测试表并初始化数据"""
@@ -282,7 +296,7 @@ def delete_from_table(table):
 def perform_full_backup():
     """执行全量备份"""
     log_step("3. 执行全量备份")
-    cmd = ["docker-compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "backup", "full"]
+    cmd = ["docker", "compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "backup", "full"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
     log_success("全量备份完成")
@@ -290,7 +304,7 @@ def perform_full_backup():
 def perform_incremental_backup():
     """执行增量备份"""
     log_step("4. 执行增量备份")
-    cmd = ["docker-compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "backup", "incremental"]
+    cmd = ["docker", "compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "backup", "incremental"]
     log_info(f"[命令] {' '.join(cmd)}")
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
@@ -470,7 +484,7 @@ def simulate_misoperations():
 def stop_mysql():
     """停止MySQL容器"""
     log_step("7. 停止 MySQL 容器以准备恢复")
-    cmd = ["docker-compose", "down"]
+    cmd = ["docker", "compose", "down"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, capture_output=True, check=False)
 
@@ -478,17 +492,17 @@ def run_point_in_time_restore():
     """执行时间点恢复"""
     log_step("8. 执行时间点恢复")
     
-    # 使用 docker-compose run --rm 执行恢复脚本，不自己写逻辑
+    # 使用 docker compose run --rm 执行恢复脚本，不自己写逻辑
     log_info(f"恢复目标时间: {PITR_TARGET_TIME} (时区: {TZ_REGION})")
     cmd = [
-        "docker-compose", "run", "--rm",
+        "docker", "compose", "run", "--rm",
         "-e", f"RESTORE_TZ={TZ_REGION}",
         "mysql", "python3", "/scripts/main.py", "restore", "pitr", PITR_TARGET_TIME
     ]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
     
-    # 等待一下，确保文件系统同步完成（docker-compose run --rm 容器删除后，volume 中的文件需要时间同步）
+    # 等待一下，确保文件系统同步完成（docker compose run --rm 容器删除后，volume 中的文件需要时间同步）
     log_info("等待文件系统同步完成...")
     time.sleep(2)
     
@@ -592,7 +606,7 @@ def check_backups_directory():
 def restart_mysql():
     """重新启动MySQL容器"""
     log_step("10. 重新启动 MySQL 容器")
-    cmd = ["docker-compose", "up", "-d"]
+    cmd = ["docker", "compose", "up", "-d"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
     wait_for_mysql()
@@ -623,7 +637,7 @@ def apply_binlog_events():
         log_info("标记文件仍然存在，尝试手动应用...")
         # 如果标记文件还存在，说明可能没有被自动应用，尝试手动应用
         cmd = [
-            "docker-compose", "exec", "-T", "mysql",
+            "docker", "compose", "exec", "-T", "mysql",
             "python3", "/scripts/main.py", "binlog", "apply-pitr"
         ]
         log_info(f"[命令] {' '.join(cmd)}")
@@ -686,7 +700,7 @@ def main():
     
     # 显示可用命令
     # log_step("显示可用命令")
-    # cmd = ["docker-compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "help"]
+    # cmd = ["docker", "compose", "exec", "-T", "mysql", "python3", "/scripts/main.py", "help"]
     # log_info(f"[命令] {' '.join(cmd)}")
     # print("")
     # subprocess.run(cmd, check=False)

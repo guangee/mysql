@@ -18,8 +18,8 @@ services:
       - backup-network
 
   mysql:
-    image: zziaguan/mysql:8.0.35
-    container_name: mysql8035
+    image: zziaguan/mysql:8.0.46
+    container_name: mysql8046
     build:
       context: ./
     restart: unless-stopped
@@ -57,17 +57,17 @@ services:
       # 备份配置
       BACKUP_BASE_DIR: /backups
       # Cron 格式: 分钟 小时 日 月 星期（当前为测试环境配置）
-      # 每 5 分钟执行全量备份（测试用，生产请改为 0 2 * * * 每天凌晨 2 点）
-      FULL_BACKUP_SCHEDULE: "*/5 * * * *"
+      # 每 3 分钟执行全量备份（测试用，生产请改为 0 2 * * * 每天凌晨 2 点）
+      FULL_BACKUP_SCHEDULE: "*/3 * * * *"
       # 每 1 分钟执行增量备份（测试用，生产请改为 */10 或 0 * * * *）
       INCREMENTAL_BACKUP_SCHEDULE: "* * * * *"
       # 备份保留天数（超过此天数的备份将被自动清理）
       BACKUP_RETENTION_DAYS: 14
       # 本地备份保留时间（仅当 S3_BACKUP_ENABLED=true 时生效）
-      # 上传到 S3 后，本地备份文件保留的时间，单位：小时
-      # 设置为 0 表示上传成功后立即删除本地文件
-      # 注意: 当 S3_BACKUP_ENABLED=false 时，本地备份将永久保留，不会自动删除
+      # 上传到 S3 并校验通过后立即删除本地文件（0 = 尽快清理）
       LOCAL_BACKUP_RETENTION_HOURS: 0
+      # 本地孤儿备份兜底清理频率（与 LOCAL_BACKUP_RETENTION_HOURS=0 配合，每分钟扫描一次）
+      CLEANUP_LOCAL_SCHEDULE: "* * * * *"
       
       # 钉钉机器人通知配置
       # 是否启用钉钉通知 (true/false)

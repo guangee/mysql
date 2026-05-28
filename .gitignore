@@ -2,9 +2,16 @@
 *.log
 *.tar.gz
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
 # 数据目录
 backups/
 mysql_data/
 mysql_config/
+minio_data/
 .idea
 miniconda3/

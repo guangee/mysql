@@ -12,7 +12,12 @@ import subprocess
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.backup_storage import (
+    cleanup_local_orphan_backups_on_s3,
+    setup_s3 as setup_s3_storage,
+)
 
 # 配置变量
 S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "true").lower() == "true"
@@ -46,29 +51,8 @@ def log(message: str):
 def setup_s3():
     """配置 S3 客户端"""
     log("配置 S3 兼容对象存储客户端...")
-    
-    # 验证必要的配置
-    if not S3_ENDPOINT or not S3_ACCESS_KEY or not S3_SECRET_KEY:
-        log("错误: S3 配置不完整，请设置 S3_ENDPOINT, S3_ACCESS_KEY 和 S3_SECRET_KEY")
+    if not setup_s3_storage(log):
         sys.exit(1)
-    
-    # 构建 S3 URL
-    if S3_USE_SSL:
-        s3_url = f"https://{S3_ENDPOINT}"
-    else:
-        s3_url = f"http://{S3_ENDPOINT}"
-    
-    # 配置 S3 别名
-    try:
-        subprocess.run(
-            ["mc", "alias", "set", S3_ALIAS, s3_url, S3_ACCESS_KEY, S3_SECRET_KEY, "--api", "s3v4"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass  # 忽略错误
-    
-    log(f"S3 配置完成 (Endpoint: {S3_ENDPOINT}, Bucket: {S3_BUCKET})")
 
 def cleanup_local_expired_backups():
     """清理本地过期的备份文件"""
@@ -212,6 +196,12 @@ def cleanup_local_expired_backups():
         log(f"已清理 {cleaned_count} 个过期本地备份和临时文件")
     else:
         log("没有需要清理的过期本地备份")
+
+    # 清理已上传至 S3 且校验一致的孤儿本地备份
+    if S3_BACKUP_ENABLED and setup_s3_storage(log):
+        orphan_cleaned = cleanup_local_orphan_backups_on_s3(BACKUP_BASE_DIR, log)
+        if orphan_cleaned > 0:
+            log(f"已清理 {orphan_cleaned} 个 S3 已确认的本地孤儿备份")
 
 def cleanup_s3_old_backups():
     """清理 S3 上的旧备份"""

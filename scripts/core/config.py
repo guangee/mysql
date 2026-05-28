@@ -12,7 +12,7 @@ class Config:
     
     # Docker 配置
     CONTAINER_NAME = os.environ.get("CONTAINER_NAME", "mysql8044")
-    IMAGE_NAME = os.environ.get("IMAGE_NAME", "zziaguan/mysql:8.0.44")
+    IMAGE_NAME = os.environ.get("IMAGE_NAME", "zziaguan/mysql:8.0.46")
     
     # MySQL 配置
     MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")

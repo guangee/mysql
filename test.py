@@ -28,13 +28,13 @@ from datetime import datetime
 from pathlib import Path
 
 # 配置变量
-CONTAINER_NAME = "mysql8035"
-IMAGE_NAME = "zziaguan/mysql:8.0.35"
-MYSQL_ROOT_PASSWORD = "rootpassword"
+CONTAINER_NAME = "mysql8046"
+IMAGE_NAME = "zziaguan/mysql:8.0.46"
+MYSQL_ROOT_PASSWORD = "root"
 MYSQL_DATABASE = "testdb"
 MYSQL_USER = "testuser"
 MYSQL_PASSWORD = "testpass"
-MYSQL_PORT = "3307"
+MYSQL_PORT = "3306"
 
 # 自动模式：如果没有设置 AUTO_PITR_TEST，默认启用自动模式
 AUTO_PITR_TEST = os.environ.get("AUTO_PITR_TEST", "y").lower() == "y"
@@ -105,7 +105,7 @@ def cleanup():
     log_step("1. 清理环境")
     
     log_info("停止并删除容器...")
-    cmd = ["docker-compose", "down", "-v"]
+    cmd = ["docker", "compose", "down", "-v"]
     log_info(f"[命令] {' '.join(cmd)}")
     subprocess.run(cmd, capture_output=True, check=False)
     cmd = ["docker", "stop", CONTAINER_NAME]
@@ -180,7 +180,7 @@ def start_container():
     log_step("3. 启动容器")
     
     log_info("启动 MySQL 容器...")
-    cmd = ["docker-compose", "up", "-d"]
+    cmd = ["docker", "compose", "up", "-d"]
     log_info(f"[命令] {' '.join(cmd)}")
     if subprocess.run(cmd, check=True).returncode == 0:
         log_success("容器启动成功")

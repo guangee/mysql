@@ -11,9 +11,17 @@ import sys
 import subprocess
 import shutil
 import tarfile
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.backup_storage import (
+    apply_local_retention,
+    cleanup_local_full_base_if_on_s3,
+    setup_s3 as setup_s3_storage,
+    upload_and_verify,
+)
 
 # 配置变量
 MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
@@ -61,41 +69,9 @@ def log(message: str):
         pass  # 忽略日志写入错误
 
 def setup_s3():
-    """配置 S3 客户端"""
+    """配置 S3 客户端（兼容旧调用）"""
     log("配置 S3 兼容对象存储客户端...")
-    
-    # 验证必要的配置
-    if not S3_ENDPOINT or not S3_ACCESS_KEY or not S3_SECRET_KEY:
-        log("错误: S3 配置不完整，请设置 S3_ENDPOINT, S3_ACCESS_KEY 和 S3_SECRET_KEY")
-        sys.exit(1)
-    
-    # 构建 S3 URL
-    if S3_USE_SSL:
-        s3_url = f"https://{S3_ENDPOINT}"
-    else:
-        s3_url = f"http://{S3_ENDPOINT}"
-    
-    # 配置 S3 别名
-    try:
-        subprocess.run(
-            ["mc", "alias", "set", S3_ALIAS, s3_url, S3_ACCESS_KEY, S3_SECRET_KEY, "--api", "s3v4"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass  # 忽略错误
-    
-    # 创建存储桶（如果不存在）
-    try:
-        subprocess.run(
-            ["mc", "mb", f"{S3_ALIAS}/{S3_BUCKET}"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass  # 忽略错误
-    
-    log(f"S3 配置完成 (Endpoint: {S3_ENDPOINT}, Bucket: {S3_BUCKET})")
+    return setup_s3_storage(log)
 
 def download_latest_full_backup() -> bool:
     """从 S3 下载最新的全量备份"""
@@ -169,42 +145,44 @@ def download_latest_full_backup() -> bool:
         log(f"错误: 下载全量备份失败: {e}")
         return False
 
-def get_base_backup() -> Optional[Path]:
-    """获取基础备份路径（始终基于最新的全量备份）"""
-    # 检查本地是否有最新的全量备份目录
+def get_base_backup() -> Tuple[Optional[Path], bool]:
+    """
+    获取基础备份路径（始终基于最新的全量备份）
+    返回: (基础备份路径, 是否从 S3 下载)
+    """
+    downloaded_from_s3 = False
     latest_backup_file = BACKUP_BASE_DIR / "LATEST_FULL_BACKUP"
     if latest_backup_file.exists():
         try:
             base_backup = Path(latest_backup_file.read_text().strip())
             if base_backup.exists() and base_backup.is_dir():
                 log(f"使用本地全量备份作为基础: {base_backup}")
-                return base_backup
+                return base_backup, False
         except Exception:
             pass
-    
-    # 本地没有，如果启用了 S3 备份，尝试从 S3 下载
+
     if S3_BACKUP_ENABLED:
         log("本地未找到全量备份，从 S3 下载最新的全量备份...")
         if download_latest_full_backup():
+            downloaded_from_s3 = True
             try:
                 base_backup = Path(latest_backup_file.read_text().strip())
                 if base_backup.exists() and base_backup.is_dir():
                     log(f"已下载并准备全量备份作为基础: {base_backup}")
-                    return base_backup
+                    return base_backup, downloaded_from_s3
             except Exception:
                 pass
     else:
         log("S3 备份已禁用，无法从 S3 下载基础备份")
-    
+
     log("错误: 无法找到或准备基础备份，请先执行全量备份")
-    return None
+    return None, False
 
 def perform_incremental_backup():
     """执行增量备份"""
     log("开始增量备份...")
-    
-    # 获取基础备份
-    base_backup = get_base_backup()
+
+    base_backup, downloaded_from_s3 = get_base_backup()
     if not base_backup:
         return 1
     
@@ -318,43 +296,29 @@ def perform_incremental_backup():
     if S3_BACKUP_ENABLED:
         log("S3 备份已启用，开始上传备份到 S3...")
         s3_path = f"{S3_ALIAS}/{S3_BUCKET}/incremental/backup_{TIMESTAMP}.tar.gz"
-        
+
+        if not upload_and_verify(backup_tar, s3_path, log):
+            log("错误: 上传校验失败，保留本地备份")
+            return 1
+
+        log(f"备份成功上传到 S3 并校验通过: backup_{TIMESTAMP}.tar.gz")
+
         try:
             subprocess.run(
-                ["mc", "cp", str(backup_tar), s3_path],
-                check=True,
-                capture_output=True
+                ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_incremental_backup_timestamp.txt"],
+                input=TIMESTAMP,
+                text=True,
+                check=False,
+                capture_output=True,
             )
-            log(f"备份成功上传到 S3: backup_{TIMESTAMP}.tar.gz")
-            
-            # 将元数据上传到 S3
-            try:
-                subprocess.run(
-                    ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_incremental_backup_timestamp.txt"],
-                    input=TIMESTAMP,
-                    text=True,
-                    check=False,
-                    capture_output=True
-                )
-            except Exception:
-                pass  # 忽略元数据上传错误
-            
-            # 处理本地备份文件保留策略
-            if LOCAL_BACKUP_RETENTION_HOURS == 0:
-                # 立即删除本地备份文件
-                shutil.rmtree(INCREMENTAL_BACKUP_DIR, ignore_errors=True)
-                log("本地备份文件已清理（立即删除模式）")
-            else:
-                # 记录删除时间
-                delete_time = int((datetime.now() + timedelta(hours=LOCAL_BACKUP_RETENTION_HOURS)).timestamp())
-                (INCREMENTAL_BACKUP_DIR / ".delete_after").write_text(str(delete_time))
-                delete_time_str = (datetime.now() + timedelta(hours=LOCAL_BACKUP_RETENTION_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
-                log(f"本地备份文件将保留 {LOCAL_BACKUP_RETENTION_HOURS} 小时，预计删除时间: {delete_time_str}")
-        except subprocess.CalledProcessError as e:
-            log("错误: 上传到 S3 失败，保留本地备份")
-            if e.stderr:
-                log(f"错误详情: {e.stderr}")
+        except Exception:
+            pass
+
+        if not apply_local_retention(INCREMENTAL_BACKUP_DIR, verified=True, log=log):
             return 1
+
+        if downloaded_from_s3 or LOCAL_BACKUP_RETENTION_HOURS == 0:
+            cleanup_local_full_base_if_on_s3(base_backup, log)
     else:
         log("S3 备份已禁用，仅保留本地备份")
         log(f"备份文件位置: {backup_tar}")
@@ -389,7 +353,8 @@ def main():
     
     # 如果启用了 S3 备份，配置 S3 客户端
     if S3_BACKUP_ENABLED:
-        setup_s3()
+        if not setup_s3():
+            sys.exit(1)
     else:
         log("S3 备份已禁用，跳过 S3 配置")
     
