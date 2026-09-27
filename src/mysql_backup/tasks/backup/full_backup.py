@@ -16,7 +16,8 @@ from pathlib import Path
 from mysql_backup.core.backup_storage import (
     apply_local_retention,
     setup_s3 as setup_s3_storage,
-    upload_and_verify,
+    upload_and_verify_all,
+    upload_metadata_to_all,
 )
 
 # 配置变量
@@ -194,26 +195,16 @@ def perform_full_backup():
     
     # 如果启用了 S3 备份，上传到 S3
     if S3_BACKUP_ENABLED:
-        log("S3 备份已启用，开始上传备份到 S3...")
-        s3_path = f"{S3_ALIAS}/{S3_BUCKET}/full/backup_{TIMESTAMP}.tar.gz"
+        log("S3 备份已启用，开始上传备份到所有配置的存储...")
+        relative_key = f"full/backup_{TIMESTAMP}.tar.gz"
 
-        if not upload_and_verify(backup_tar, s3_path, log):
-            log("错误: 上传校验失败，保留本地备份")
+        if not upload_and_verify_all(backup_tar, relative_key, log):
+            log("错误: 上传校验失败（部分或全部存储失败），保留本地备份")
             return 1
 
         log(f"备份成功上传到 S3 并校验通过: backup_{TIMESTAMP}.tar.gz")
 
-        # 将元数据上传到 S3
-        try:
-            subprocess.run(
-                ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_full_backup_timestamp.txt"],
-                input=TIMESTAMP,
-                text=True,
-                check=False,
-                capture_output=True,
-            )
-        except Exception:
-            pass  # 忽略元数据上传错误
+        upload_metadata_to_all(".metadata/latest_full_backup_timestamp.txt", TIMESTAMP, log)
 
         if not apply_local_retention(FULL_BACKUP_DIR, verified=True, log=log):
             return 1
@@ -241,7 +232,7 @@ def send_dingtalk_notify(status: str, message: str):
             capture_output=True,
         )
     except Exception:
-        pass  # 忽略通知错误
+        pass
 
 def main():
     """主函数"""

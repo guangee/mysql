@@ -37,6 +37,7 @@ services:
       - ./data/mysql_data:/var/lib/mysql
       - ./data/mysql_config:/etc/mysql/conf.d
       - ./data/backups:/backups
+      - ./shared:/shared
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     ports:
@@ -55,6 +56,37 @@ services:
       - --bind-address=0.0.0.0
       - --default-time-zone=+08:00
       - --binlog-expire-logs-seconds=2592000
+
+  console:
+    image: ${CONSOLE_IMAGE:-mysql-console:latest}
+    container_name: mysql-console
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mysql
+    env_file:
+      - .env
+    environment:
+      CONSOLE_MYSQL_HOST: mysql
+      CONSOLE_MYSQL_PORT: "3306"
+      PROJECT_ROOT: /app
+      BACKUP_BASE_DIR: /backups
+      STORAGES_CONFIG_FILE: /shared/storages.json
+      BACKUP_POLICY_FILE: /shared/backup_policy.json
+      MYSQL_DATA_DIR: /var/lib/mysql
+      MYSQL_CONFIG_DIR: /etc/mysql/conf.d
+    ports:
+      - "${CONSOLE_PORT:-8888}:80"
+    volumes:
+      - ./shared:/shared
+      - ./data/backups:/backups
+      - ./data/console_data:/app/data
+      - ./data/logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - backup-network
 
 networks:
   backup-network:

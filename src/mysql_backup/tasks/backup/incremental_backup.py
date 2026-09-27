@@ -19,7 +19,8 @@ from mysql_backup.core.backup_storage import (
     apply_local_retention,
     cleanup_local_full_base_if_on_s3,
     setup_s3 as setup_s3_storage,
-    upload_and_verify,
+    upload_and_verify_all,
+    upload_metadata_to_all,
 )
 
 # 配置变量
@@ -145,7 +146,7 @@ def download_latest_full_backup() -> bool:
         return False
 
 def _prepare_local_full(base_backup: Path) -> bool:
-    """全量目录里要有 xtrabackup_checkpoints，否则从同目录 backup.tar.gz 解出来。"""
+    """全量目录需要 xtrabackup_checkpoints；若只剩 tar 包则先解压。"""
     if (base_backup / "xtrabackup_checkpoints").is_file():
         return True
     archive = base_backup / "backup.tar.gz"
@@ -181,7 +182,7 @@ def get_base_backup() -> Tuple[Optional[Path], bool]:
             downloaded_from_s3 = True
             try:
                 base_backup = Path(latest_backup_file.read_text().strip())
-                if base_backup.exists() and base_backup.is_dir():
+                if base_backup.exists() and base_backup.is_dir() and _prepare_local_full(base_backup):
                     log(f"已下载并准备全量备份作为基础: {base_backup}")
                     return base_backup, downloaded_from_s3
             except Exception:
@@ -308,25 +309,16 @@ def perform_incremental_backup():
     
     # 如果启用了 S3 备份，上传到 S3
     if S3_BACKUP_ENABLED:
-        log("S3 备份已启用，开始上传备份到 S3...")
-        s3_path = f"{S3_ALIAS}/{S3_BUCKET}/incremental/backup_{TIMESTAMP}.tar.gz"
+        log("S3 备份已启用，开始上传备份到所有配置的存储...")
+        relative_key = f"incremental/backup_{TIMESTAMP}.tar.gz"
 
-        if not upload_and_verify(backup_tar, s3_path, log):
-            log("错误: 上传校验失败，保留本地备份")
+        if not upload_and_verify_all(backup_tar, relative_key, log):
+            log("错误: 上传校验失败（部分或全部存储失败），保留本地备份")
             return 1
 
         log(f"备份成功上传到 S3 并校验通过: backup_{TIMESTAMP}.tar.gz")
 
-        try:
-            subprocess.run(
-                ["mc", "pipe", f"{S3_ALIAS}/{S3_BUCKET}/.metadata/latest_incremental_backup_timestamp.txt"],
-                input=TIMESTAMP,
-                text=True,
-                check=False,
-                capture_output=True,
-            )
-        except Exception:
-            pass
+        upload_metadata_to_all(".metadata/latest_incremental_backup_timestamp.txt", TIMESTAMP, log)
 
         if not apply_local_retention(INCREMENTAL_BACKUP_DIR, verified=True, log=log):
             return 1
@@ -356,7 +348,7 @@ def send_dingtalk_notify(status: str, message: str):
             capture_output=True,
         )
     except Exception:
-        pass  # 忽略通知错误
+        pass
 
 def main():
     """主函数"""

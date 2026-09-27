@@ -12,6 +12,13 @@ __pycache__/
 # 运行时数据（compose 卷映射）
 data/*
 !data/.gitkeep
+shared/*
+!shared/.gitkeep
+console/data/
+console/logs/
+console/staticfiles/
+frontend/node_modules/
+frontend/dist/
 .idea
 miniconda3/
 docker/bin/mc

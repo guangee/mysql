@@ -55,6 +55,8 @@ services:
 docker-compose up -d
 ```
 
+带界面的控制台（性能、备份、恢复）和 MySQL 一起启动。首次会构建 `mysql-console` 镜像，也可以单独执行 `./run.sh`。浏览器打开 `http://127.0.0.1:8888`，账号见 `.env` 里的 `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD`。控制台在容器网络内连接 `mysql:3306`，宿主机映射端口只给外部客户端使用。
+
 ### 3. 查看服务状态
 
 ```bash
@@ -377,8 +379,12 @@ environment:
 ```
 mysql/
 ├── docker-compose.yml               # Compose 编排（留在根目录）
+├── run.sh                           # 构建控制台镜像并启动
 ├── .env.example                     # 环境变量模板
 ├── README.md                        # 主文档
+├── console/                         # Django 控制台 API
+├── frontend/                        # Vue 控制台页面
+├── shared/                          # 容器间共享的存储与备份策略
 ├── docker/                          # 镜像构建相关
 │   ├── Dockerfile
 │   ├── docker-entrypoint.sh

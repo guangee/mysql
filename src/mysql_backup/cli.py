@@ -37,9 +37,10 @@ def show_help() -> None:
     {yellow}backup incremental{nc}
         示例: {CLI} backup incremental
 
-    {yellow}backup cleanup [--local-only]{nc}
+    {yellow}backup cleanup [--local-only|--s3-only]{nc}
         示例: {CLI} backup cleanup
         示例: {CLI} backup cleanup --local-only
+        示例: {CLI} backup cleanup --s3-only
 
 {bold}{green}恢复命令 (restore):{nc}
     {yellow}restore backup{nc}
@@ -64,6 +65,9 @@ def show_help() -> None:
 {bold}{green}调度命令 (schedule):{nc}
     {yellow}schedule start{nc}
         示例: {CLI} schedule start
+
+    {yellow}schedule update{nc}
+        示例: {CLI} schedule update
 
 {bold}{yellow}注意事项:{nc}
   • 时间点恢复时间格式: YYYY-MM-DD HH:MM:SS（本地时区，默认 Asia/Shanghai）
@@ -95,6 +99,11 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="只清理本地备份，不清理 S3",
     )
+    cleanup_parser.add_argument(
+        "--s3-only",
+        action="store_true",
+        help="只清理对象存储备份，不清理本地",
+    )
 
     restore_parser = subparsers.add_parser("restore", help="恢复相关命令")
     restore_sub = restore_parser.add_subparsers(dest="command", help="恢复命令")
@@ -123,6 +132,7 @@ def main(argv: list[str] | None = None) -> None:
     schedule_parser = subparsers.add_parser("schedule", help="调度相关命令")
     schedule_sub = schedule_parser.add_subparsers(dest="command", help="调度命令")
     schedule_sub.add_parser("start", help="启动备份调度服务")
+    schedule_sub.add_parser("update", help="按策略重写备份 crontab 后退出")
 
     subparsers.add_parser("help", help="显示详细的使用帮助")
 
@@ -146,7 +156,10 @@ def main(argv: list[str] | None = None) -> None:
                 incremental_main()
             elif args.command == "cleanup":
                 from mysql_backup.tasks.backup.cleanup_old_backups import main as cleanup_main
-                cleanup_main(local_only=getattr(args, "local_only", False))
+                cleanup_main(
+                    local_only=getattr(args, "local_only", False),
+                    s3_only=getattr(args, "s3_only", False),
+                )
             else:
                 backup_parser.print_help()
                 sys.exit(1)
@@ -205,6 +218,9 @@ def main(argv: list[str] | None = None) -> None:
             if args.command == "start":
                 from mysql_backup.tasks.schedule.start_backup import main as schedule_main
                 schedule_main()
+            elif args.command == "update":
+                from mysql_backup.tasks.schedule.update_crontab import main as update_main
+                update_main()
             else:
                 schedule_parser.print_help()
                 sys.exit(1)

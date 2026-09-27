@@ -2,6 +2,7 @@
 备份存储工具模块
 
 提供 S3 上传校验与本地备份清理的共享逻辑
+支持从 shared/storages.json 读取多对象存储并同步上传
 """
 
 import hashlib
@@ -13,6 +14,7 @@ import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "true").lower() == "true"
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
@@ -22,35 +24,141 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "mysql-backups")
 S3_USE_SSL = os.environ.get("S3_USE_SSL", "true").lower() == "true"
 S3_ALIAS = os.environ.get("S3_ALIAS", "s3")
 LOCAL_BACKUP_RETENTION_HOURS = int(os.environ.get("LOCAL_BACKUP_RETENTION_HOURS", "0"))
+STORAGES_CONFIG_FILE = os.environ.get("STORAGES_CONFIG_FILE", "/shared/storages.json")
 
 TIMESTAMP_PATTERN = re.compile(r"^\d{8}_\d{6}$")
+BACKUP_FILENAME_TS = re.compile(r"backup_(\d{8}_\d{6})")
 
 
-def setup_s3(log: Callable[[str], None]) -> bool:
-    """配置 S3 客户端，返回是否配置成功"""
-    if not S3_ENDPOINT or not S3_ACCESS_KEY or not S3_SECRET_KEY:
-        log("错误: S3 配置不完整，请设置 S3_ENDPOINT, S3_ACCESS_KEY 和 S3_SECRET_KEY")
+def backup_timezone() -> ZoneInfo:
+    return ZoneInfo(os.environ.get("BACKUP_TIMEZONE", "UTC"))
+
+
+def parse_backup_filename_timestamp(filename: str) -> datetime | None:
+    """从 backup_YYYYMMDD_HHMMSS.tar.gz 解析备份时间（与备份脚本命名时区一致）"""
+    match = BACKUP_FILENAME_TS.search(filename or "")
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S").replace(tzinfo=backup_timezone())
+    except ValueError:
+        return None
+
+
+def is_backup_expired_by_retention(
+    filename: str,
+    retention_days: int,
+    now: datetime | None = None,
+) -> bool:
+    """与控制台列表一致：备份时间 + 保留天数 <= 当前时间即为过期"""
+    created = parse_backup_filename_timestamp(filename)
+    if not created:
+        return False
+    tz = backup_timezone()
+    now = now or datetime.now(tz)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    return now >= created + timedelta(days=retention_days)
+
+
+def load_storages_from_file() -> list[dict]:
+    """从 JSON 文件加载多对象存储配置"""
+    config_path = Path(STORAGES_CONFIG_FILE)
+    if not config_path.exists():
+        return []
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [s for s in data if s.get("enabled", True)]
+    except Exception:
+        pass
+    return []
+
+
+def get_active_storages() -> list[dict]:
+    """获取当前启用的存储列表，无配置文件时回退到环境变量"""
+    storages = load_storages_from_file()
+    if storages:
+        return storages
+    if S3_BACKUP_ENABLED and S3_ENDPOINT and S3_ACCESS_KEY and S3_SECRET_KEY:
+        return [
+            {
+                "id": 0,
+                "name": "default",
+                "alias": S3_ALIAS,
+                "endpoint": S3_ENDPOINT,
+                "access_key": S3_ACCESS_KEY,
+                "secret_key": S3_SECRET_KEY,
+                "bucket": S3_BUCKET,
+                "use_ssl": S3_USE_SSL,
+                "enabled": True,
+            }
+        ]
+    return []
+
+
+def _storage_alias(storage: dict) -> str:
+    alias = storage.get("alias") or f"s3_{storage.get('id', 0)}"
+    return str(alias)
+
+
+def setup_storage(storage: dict, log: Callable[[str], None]) -> bool:
+    """配置单个 S3 存储客户端"""
+    endpoint = storage.get("endpoint", "")
+    access_key = storage.get("access_key", "")
+    secret_key = storage.get("secret_key", "")
+    bucket = storage.get("bucket", S3_BUCKET)
+    use_ssl = storage.get("use_ssl", S3_USE_SSL)
+    alias = _storage_alias(storage)
+    name = storage.get("name", alias)
+
+    if not endpoint or not access_key or not secret_key:
+        log(f"[存储:{name}] 错误: 配置不完整")
         return False
 
-    s3_url = f"https://{S3_ENDPOINT}" if S3_USE_SSL else f"http://{S3_ENDPOINT}"
-
+    s3_url = f"https://{endpoint}" if use_ssl else f"http://{endpoint}"
     try:
         subprocess.run(
-            ["mc", "alias", "set", S3_ALIAS, s3_url, S3_ACCESS_KEY, S3_SECRET_KEY, "--api", "s3v4"],
+            ["mc", "alias", "set", alias, s3_url, access_key, secret_key, "--api", "s3v4"],
             check=False,
             capture_output=True,
         )
         subprocess.run(
-            ["mc", "mb", f"{S3_ALIAS}/{S3_BUCKET}"],
+            ["mc", "mb", f"{alias}/{bucket}"],
             check=False,
             capture_output=True,
         )
     except Exception as e:
-        log(f"错误: S3 客户端配置失败: {e}")
+        log(f"[存储:{name}] 错误: S3 客户端配置失败: {e}")
         return False
 
-    log(f"S3 配置完成 (Endpoint: {S3_ENDPOINT}, Bucket: {S3_BUCKET})")
+    log(f"[存储:{name}] S3 配置完成 (Endpoint: {endpoint}, Bucket: {bucket})")
     return True
+
+
+def setup_all_s3(log: Callable[[str], None]) -> bool:
+    """配置所有启用的 S3 存储"""
+    storages = get_active_storages()
+    if not storages:
+        log("错误: 未找到可用的 S3 存储配置")
+        return False
+    ok = True
+    for storage in storages:
+        if not setup_storage(storage, log):
+            ok = False
+    return ok
+
+
+def s3_object_path(storage: dict, relative_key: str) -> str:
+    """构建 mc 路径 alias/bucket/relative_key"""
+    alias = _storage_alias(storage)
+    bucket = storage.get("bucket", S3_BUCKET)
+    return f"{alias}/{bucket}/{relative_key.lstrip('/')}"
+
+
+def setup_s3(log: Callable[[str], None]) -> bool:
+    """配置 S3 客户端，返回是否配置成功（兼容单存储与多存储）"""
+    return setup_all_s3(log)
 
 
 def compute_file_sha256(file_path: Path) -> str:
@@ -171,7 +279,7 @@ def verify_s3_upload(local_path: Path, s3_path: str, log: Callable[[str], None])
 
 
 def upload_and_verify(local_path: Path, s3_path: str, log: Callable[[str], None]) -> bool:
-    """上传文件到 S3 并校验一致性"""
+    """上传文件到 S3 并校验一致性（单目标）"""
     log(f"上传文件: {local_path} -> {s3_path}")
     try:
         result = subprocess.run(
@@ -191,6 +299,51 @@ def upload_and_verify(local_path: Path, s3_path: str, log: Callable[[str], None]
         return False
 
     return verify_s3_upload(local_path, s3_path, log)
+
+
+def upload_and_verify_all(local_path: Path, relative_key: str, log: Callable[[str], None]) -> bool:
+    """上传文件到所有启用的 S3 存储并校验（sync_all 策略）"""
+    storages = get_active_storages()
+    if not storages:
+        log("错误: 无可用存储配置")
+        return False
+
+    all_ok = True
+    any_ok = False
+    for storage in storages:
+        name = storage.get("name", _storage_alias(storage))
+        if not setup_storage(storage, log):
+            log(f"[存储:{name}] 失败 - 配置失败")
+            all_ok = False
+            continue
+        s3_path = s3_object_path(storage, relative_key)
+        if upload_and_verify(local_path, s3_path, log):
+            log(f"[存储:{name}] 成功")
+            any_ok = True
+        else:
+            log(f"[存储:{name}] 失败 - 上传或校验未通过")
+            all_ok = False
+
+    if not any_ok:
+        return False
+    return all_ok
+
+
+def upload_metadata_to_all(relative_key: str, content: str, log: Callable[[str], None]) -> None:
+    """将元数据写入所有启用的存储"""
+    for storage in get_active_storages():
+        name = storage.get("name", _storage_alias(storage))
+        s3_path = s3_object_path(storage, relative_key)
+        try:
+            subprocess.run(
+                ["mc", "pipe", s3_path],
+                input=content,
+                text=True,
+                check=False,
+                capture_output=True,
+            )
+        except Exception as e:
+            log(f"[存储:{name}] 元数据上传警告: {e}")
 
 
 def apply_local_retention(

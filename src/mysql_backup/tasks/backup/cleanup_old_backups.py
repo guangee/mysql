@@ -10,12 +10,17 @@ import os
 import sys
 import subprocess
 import shutil
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from mysql_backup.core.backup_storage import (
     cleanup_local_orphan_backups_on_s3,
+    get_active_storages,
+    is_backup_expired_by_retention,
+    setup_storage,
     setup_s3 as setup_s3_storage,
+    _storage_alias,
 )
 
 # 配置变量
@@ -29,6 +34,7 @@ S3_USE_SSL = os.environ.get("S3_USE_SSL", "true").lower() == "true"
 S3_FORCE_PATH_STYLE = os.environ.get("S3_FORCE_PATH_STYLE", "false").lower() == "true"
 S3_ALIAS = os.environ.get("S3_ALIAS", "s3")
 BACKUP_RETENTION_DAYS = int(os.environ.get("BACKUP_RETENTION_DAYS", "30"))
+BACKUP_POLICY_FILE = Path(os.environ.get("BACKUP_POLICY_FILE", "/shared/backup_policy.json"))
 BACKUP_BASE_DIR = Path(os.environ.get("BACKUP_BASE_DIR", "/backups"))
 
 # 日志文件
@@ -202,37 +208,96 @@ def cleanup_local_expired_backups():
         if orphan_cleaned > 0:
             log(f"已清理 {orphan_cleaned} 个 S3 已确认的本地孤儿备份")
 
+def load_retention_days() -> tuple[int, int]:
+    """读取全量/增量保留天数，优先 shared/backup_policy.json"""
+    default = BACKUP_RETENTION_DAYS
+    full_days = int(os.environ.get("FULL_BACKUP_RETENTION_DAYS", str(default)))
+    incremental_days = int(os.environ.get("INCREMENTAL_BACKUP_RETENTION_DAYS", str(default)))
+    if BACKUP_POLICY_FILE.exists():
+        try:
+            data = json.loads(BACKUP_POLICY_FILE.read_text(encoding="utf-8"))
+            full_days = int(data.get("full_retention_days", full_days))
+            incremental_days = int(data.get("incremental_retention_days", incremental_days))
+        except Exception:
+            pass
+    return full_days, incremental_days
+
+
+def _cleanup_s3_by_retention(storage: dict, subdir: str, retention_days: int) -> tuple[int, int]:
+    """按文件名时间戳 + 保留天数清理对象存储（与控制台过期判定一致）"""
+    name = storage.get("name") or _storage_alias(storage)
+    alias = _storage_alias(storage)
+    bucket = storage.get("bucket", S3_BUCKET)
+    mc_prefix = f"{alias}/{bucket}/{subdir}/"
+    tz = backup_timezone()
+    now = datetime.now(tz)
+    scanned = 0
+    deleted = 0
+
+    result = subprocess.run(
+        ["mc", "find", mc_prefix, "--name", "backup_*.tar.gz"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        log(f"[存储:{name}] 列举 {subdir} 备份失败: {err[:200]}")
+        return scanned, deleted
+
+    for line in result.stdout.splitlines():
+        path = line.strip()
+        if not path:
+            continue
+        scanned += 1
+        filename = path.rsplit("/", 1)[-1]
+        if not is_backup_expired_by_retention(filename, retention_days, now):
+            continue
+        rm = subprocess.run(["mc", "rm", path], capture_output=True, text=True, check=False)
+        if rm.returncode == 0:
+            deleted += 1
+            log(f"[存储:{name}] 已删除过期 {subdir} 备份: {filename}")
+        else:
+            err = (rm.stderr or rm.stdout or "").strip()
+            log(f"[存储:{name}] 删除失败 {filename}: {err[:120]}")
+
+    log(f"[存储:{name}] {subdir} 扫描 {scanned} 个，删除 {deleted} 个过期备份（保留 {retention_days} 天）")
+    return scanned, deleted
+
+
 def cleanup_s3_old_backups():
-    """清理 S3 上的旧备份"""
-    log(f"开始清理 S3 上 {BACKUP_RETENTION_DAYS} 天前的备份...")
-    
-    setup_s3()
-    
-    # 清理全量备份
-    log("清理 S3 全量备份...")
-    try:
-        subprocess.run(
-            ["mc", "find", f"{S3_ALIAS}/{S3_BUCKET}/full/", "--name", "backup_*.tar.gz",
-             "--older-than", f"{BACKUP_RETENTION_DAYS}d", "--exec", "mc rm {}"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass
-    
-    # 清理增量备份
-    log("清理 S3 增量备份...")
-    try:
-        subprocess.run(
-            ["mc", "find", f"{S3_ALIAS}/{S3_BUCKET}/incremental/", "--name", "backup_*.tar.gz",
-             "--older-than", f"{BACKUP_RETENTION_DAYS}d", "--exec", "mc rm {}"],
-            check=False,
-            capture_output=True
-        )
-    except Exception:
-        pass
-    
-    log("S3 清理完成")
+    """清理各对象存储上过期的全量/增量备份"""
+    full_days, incremental_days = load_retention_days()
+    log(f"开始清理对象存储：全量保留 {full_days} 天、增量保留 {incremental_days} 天（按备份文件名时间判定）...")
+
+    storages = get_active_storages()
+    if not storages:
+        if not S3_BACKUP_ENABLED:
+            log("S3 备份已禁用，跳过 S3 清理")
+            return
+        setup_s3()
+        storages = get_active_storages()
+
+    if not storages:
+        log("未配置对象存储，跳过 S3 清理")
+        return
+
+    total_scanned = 0
+    total_deleted = 0
+    for storage in storages:
+        name = storage.get("name") or _storage_alias(storage)
+        if not setup_storage(storage, log):
+            log(f"[存储:{name}] 客户端配置失败，跳过清理")
+            continue
+
+        scanned, deleted = _cleanup_s3_by_retention(storage, "full", full_days)
+        total_scanned += scanned
+        total_deleted += deleted
+        scanned, deleted = _cleanup_s3_by_retention(storage, "incremental", incremental_days)
+        total_scanned += scanned
+        total_deleted += deleted
+
+    log(f"对象存储清理完成：共扫描 {total_scanned} 个，删除 {total_deleted} 个过期备份")
 
 def cleanup_old_backups():
     """清理旧备份（本地和 S3）"""
@@ -247,10 +312,15 @@ def cleanup_old_backups():
     
     log("备份清理完成")
 
-def main(local_only: bool = False):
+def main(local_only: bool = False, s3_only: bool = False):
     """主函数"""
-    if local_only or (len(sys.argv) > 1 and sys.argv[1] == "--local-only"):
+    if local_only or "--local-only" in sys.argv:
         cleanup_local_expired_backups()
+    elif s3_only or "--s3-only" in sys.argv:
+        if S3_BACKUP_ENABLED or get_active_storages():
+            cleanup_s3_old_backups()
+        else:
+            log("S3 备份已禁用，跳过 S3 清理")
     else:
         cleanup_old_backups()
 
