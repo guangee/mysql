@@ -106,13 +106,7 @@ docker-compose restart mysql
 **方式 A：使用统一入口（推荐）**
 
 ```bash
-docker-compose exec mysql python3 /scripts/main.py backup full
-```
-
-**方式 B：直接调用 Python 脚本**
-
-```bash
-docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
+docker-compose exec mysql python3 -m mysql_backup backup full
 ```
 
 ### 方式三：手动执行增量备份
@@ -120,13 +114,7 @@ docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
 **方式 A：使用统一入口（推荐）**
 
 ```bash
-docker-compose exec mysql python3 /scripts/main.py backup incremental
-```
-
-**方式 B：直接调用 Python 脚本**
-
-```bash
-docker-compose exec mysql python3 /scripts/tasks/backup/incremental_backup.py
+docker-compose exec mysql python3 -m mysql_backup backup incremental
 ```
 
 **注意**：增量备份需要先有全量备份作为基础。
@@ -164,20 +152,10 @@ docker-compose stop mysql
 
 ```bash
 # 恢复指定时间戳的全量备份（自动从 S3 下载，如果启用）
-docker-compose run --rm mysql python3 /scripts/main.py restore backup 20251127_020000
+docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251127_020000
 
 # 恢复全量备份并应用增量备份
-docker-compose run --rm mysql python3 /scripts/main.py restore backup 20251127_020000 backup_20251128_030000.tar.gz backup_20251129_030000.tar.gz
-```
-
-**方式 B：直接调用 Python 脚本**
-
-```bash
-# 恢复指定时间戳的全量备份（自动从 S3 下载，如果启用）
-docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py 20251127_020000
-
-# 恢复全量备份并应用增量备份
-docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py 20251127_020000 backup_20251128_030000.tar.gz backup_20251129_030000.tar.gz
+docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251127_020000 backup_20251128_030000.tar.gz backup_20251129_030000.tar.gz
 ```
 
 **说明**：
@@ -191,10 +169,8 @@ docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py 2
 
 ```bash
 # 使用统一入口
-docker-compose run --rm mysql python3 /scripts/main.py restore apply /backups/restore
+docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
-# 或直接调用 Python 脚本
-docker-compose run --rm mysql python3 /scripts/tasks/restore/apply_restore.py /backups/restore
 ```
 
 **环境变量选项**：
@@ -225,31 +201,17 @@ docker-compose stop mysql
 # 恢复到指定时间点（自动查找备份和二进制日志）
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-27 18:23:10"
+  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10"
 
 # 指定全量备份时间戳
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-27 18:23:10" 20251127_020000
+  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10" 20251127_020000
 
 # 指定全量备份和增量备份
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-27 18:23:10" 20251127_020000 backup_20251127_030000.tar.gz
-```
-
-**方式 B：直接调用 Python 脚本**
-
-```bash
-# 恢复到指定时间点（自动查找备份和二进制日志）
-docker-compose run --rm \
-  -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-27 18:23:10"
-
-# 指定全量备份时间戳
-docker-compose run --rm \
-  -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-27 18:23:10" 20251127_020000
+  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10" 20251127_020000 backup_20251127_030000.tar.gz
 ```
 
 **时间格式说明**：
@@ -257,7 +219,7 @@ docker-compose run --rm \
 - 时区：东8区（Asia/Shanghai）本地时间（可通过 `RESTORE_TZ` 环境变量修改）
 - 示例：`"2025-11-27 18:23:10"`
 
-**详细说明请参考**：[时间格式使用说明](使用说明-时间格式.md)
+**详细说明请参考**：[时间格式使用说明](docs/使用说明-时间格式.md)
 
 **说明**：
 - 脚本会自动查找目标时间之前的最新备份（全量或增量）
@@ -347,7 +309,7 @@ environment:
 
 当 `S3_BACKUP_ENABLED=false` 时：
 - ✅ 备份仍然会正常执行（全量和增量备份）
-- ✅ 备份文件保存在本地目录 `./backups/`
+- ✅ 备份文件保存在本地目录 `./data/backups/`
 - ❌ 不会上传到 S3 对象存储
 - ❌ 增量备份只能使用本地的基础备份
 
@@ -414,18 +376,33 @@ environment:
 
 ```
 mysql/
-├── docker-compose.yml              # Docker Compose 配置文件
-├── Dockerfile                       # MySQL 镜像构建文件
-├── docker-entrypoint.sh            # 容器入口点脚本
-├── mysql_data/                     # MySQL 数据目录（自动创建）
-├── mysql_config/                   # MySQL 配置文件目录（自动创建）
-└── backups/                        # 备份文件目录（自动创建）
-    ├── full/                       # 全量备份目录
-    │   └── YYYYMMDD_HHMMSS/        # 按时间戳组织的备份
-    ├── incremental/                # 增量备份目录
-    │   └── YYYYMMDD_HHMMSS/        # 按时间戳组织的备份
-    ├── binlog_backup_*/            # 二进制日志备份（PITR 使用）
-    └── backup.log                  # 备份日志文件
+├── docker-compose.yml               # Compose 编排（留在根目录）
+├── .env.example                     # 环境变量模板
+├── README.md                        # 主文档
+├── docker/                          # 镜像构建相关
+│   ├── Dockerfile
+│   ├── docker-entrypoint.sh
+│   ├── docker-entrypoint-with-backup.sh
+│   ├── bashrc
+│   └── sources.list
+├── src/                             # Python 包源码（src layout）
+│   └── mysql_backup/                # 包名；容器内: python -m mysql_backup
+│       ├── cli.py
+│       ├── core/
+│       └── tasks/
+├── pyproject.toml                   # 包元数据 / console script: mysql-backup
+├── tools/                           # 主机侧辅助脚本（不进镜像）
+├── tests/                           # 主机侧集成测试
+├── docs/                            # 补充文档
+└── data/                            # 运行时数据（已 gitignore）
+    ├── mysql_data/                  # MySQL 数据目录
+    ├── mysql_config/                # MySQL 配置
+    ├── minio_data/                  # 对象存储数据
+    └── backups/                     # 备份文件
+        ├── full/
+        ├── incremental/
+        ├── binlog_backup_*/
+        └── backup.log
 ```
 
 ## 备份存储结构
@@ -433,7 +410,7 @@ mysql/
 ### 本地存储
 
 ```
-./backups/
+./data/backups/
 ├── full/
 │   └── 20251127_020000/            # 全量备份时间戳目录
 │       └── backup.tar.gz            # 备份压缩文件
@@ -492,10 +469,8 @@ docker-compose exec mysql mc ls -lh s3/mysql-backups/full/
 ```bash
 # 手动清理旧备份（根据 BACKUP_RETENTION_DAYS 配置）
 # 使用统一入口（推荐）
-docker-compose exec mysql python3 /scripts/main.py backup cleanup
+docker-compose exec mysql python3 -m mysql_backup backup cleanup
 
-# 或直接调用 Python 脚本
-docker-compose exec mysql python3 /scripts/tasks/backup/cleanup_old_backups.py
 ```
 
 ## 故障排查
@@ -526,10 +501,8 @@ docker-compose exec mysql python3 /scripts/tasks/backup/cleanup_old_backups.py
 1. **手动执行一次全量备份**：
    ```bash
    # 使用统一入口（推荐）
-   docker-compose exec mysql python3 /scripts/main.py backup full
+   docker-compose exec mysql python3 -m mysql_backup backup full
    
-   # 或直接调用 Python 脚本
-   docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
    ```
 
 2. **检查基础备份文件**：
@@ -552,10 +525,8 @@ docker-compose exec mysql python3 /scripts/tasks/backup/cleanup_old_backups.py
 3. **手动测试备份脚本**：
    ```bash
    # 使用统一入口（推荐）
-   docker-compose exec mysql python3 /scripts/main.py backup full
+   docker-compose exec mysql python3 -m mysql_backup backup full
    
-   # 或直接调用 Python 脚本
-   docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
    ```
 
 ### 恢复失败
@@ -593,8 +564,11 @@ docker-compose exec mysql python3 /scripts/tasks/backup/cleanup_old_backups.py
 
 ## 相关文档
 
-- [时间格式使用说明](使用说明-时间格式.md) - 时间点恢复的时间格式说明
-- [注意事项](注意事项.md) - 测试过程中发现的问题和解决方案
+- [时间格式使用说明](docs/使用说明-时间格式.md) - 时间点恢复的时间格式说明
+- [注意事项](docs/注意事项.md) - 测试过程中发现的问题和解决方案
+- [PITR 说明](docs/README_PITR.md) - 时间点恢复详细文档
+- [恢复说明](docs/README_RESTORE.md) - 普通恢复详细文档
+- [测试流程](docs/TEST_FLOW.md) - 测试流程说明
 
 ## 许可证
 

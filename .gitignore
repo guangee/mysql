@@ -9,10 +9,10 @@ __pycache__/
 *$py.class
 *.pyo
 
-# 数据目录
-backups/
-mysql_data/
-mysql_config/
-minio_data/
+# 运行时数据（compose 卷映射）
+data/*
+!data/.gitkeep
 .idea
 miniconda3/
+docker/bin/mc
+docker/bin/minio

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mysql-backup"
+version = "0.1.0"
+description = "MySQL 8.0 backup and point-in-time restore tooling (XtraBackup + binlog)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Proprietary" }
+
+[project.scripts]
+mysql-backup = "mysql_backup.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
