@@ -1,43 +1,38 @@
-/** PITR 时间点选择：日期 + 当日时间轴（秒级） */
+/** PITR 时间点选择：日期 + 当日时间轴（秒级），墙钟时间为东八区。 */
+
+import { formatClock, formatDateTime, fromShanghaiParts, shanghaiParts, toDate } from '@/utils/datetime'
+
+function pad(n) {
+  return String(n).padStart(2, '0')
+}
 
 export function formatDisplayDateTime(date) {
-  if (!date || Number.isNaN(date.getTime())) return ''
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return formatDateTime(date)
 }
 
 export function parseDisplayDateTime(value) {
-  const text = (value || '').trim()
-  if (!text) return null
-  const [datePart, timePart = '00:00:00'] = text.split(' ')
-  const [y, m, d] = datePart.split('-').map(Number)
-  const [hh, mm, ss] = timePart.split(':').map(Number)
-  if (!y || !m || !d) return null
-  const dt = new Date(y, m - 1, d, hh || 0, mm || 0, ss || 0)
-  return Number.isNaN(dt.getTime()) ? null : dt
+  return toDate(value)
 }
 
 export function datePartOf(value) {
-  const dt = typeof value === 'string' ? parseDisplayDateTime(value) : value
-  if (!dt) return ''
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+  const date = typeof value === 'string' ? toDate(value) : value
+  if (!date || Number.isNaN(date.getTime())) return ''
+  const part = shanghaiParts(date)
+  return `${part.year}-${pad(part.month)}-${pad(part.day)}`
 }
 
 export function startOfDay(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return new Date(y, m - 1, d, 0, 0, 0)
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return fromShanghaiParts(year, month, day, 0, 0, 0)
 }
 
 export function endOfDay(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  return new Date(y, m - 1, d, 23, 59, 59)
+  const [year, month, day] = dateStr.split('-').map(Number)
+  return fromShanghaiParts(year, month, day, 23, 59, 59)
 }
 
 export function parseIso(value) {
-  if (!value) return null
-  const dt = new Date(value)
-  return Number.isNaN(dt.getTime()) ? null : dt
+  return toDate(value)
 }
 
 /** 某日内在全局可恢复范围内的起止时间（秒级跨度） */
@@ -58,32 +53,29 @@ export function getDayTimeRange(dateStr, earliestIso, latestIso) {
 export function isDateDisabled(date, earliestIso, latestIso) {
   const earliest = parseIso(earliestIso)
   const latest = parseIso(latestIso)
-  if (!earliest || !latest) return true
-  const dayStart = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0)
-  const dayEnd = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59)
-  return dayEnd < earliest || dayStart > latest
+  if (!earliest || !latest || !date) return true
+  const day = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return day < datePartOf(earliest) || day > datePartOf(latest)
 }
 
-export function datetimeToOffset(dateStr, dt, dayRange) {
-  if (!dayRange || !dt) return 0
-  const ms = dt.getTime() - dayRange.start.getTime()
+export function datetimeToOffset(dateStr, date, dayRange) {
+  if (!dayRange || !date) return 0
+  const ms = date.getTime() - dayRange.start.getTime()
   return Math.min(dayRange.spanSec, Math.max(0, Math.floor(ms / 1000)))
 }
 
 export function offsetToDisplay(dayRange, offsetSec) {
   if (!dayRange) return ''
   const clamped = Math.min(dayRange.spanSec, Math.max(0, offsetSec))
-  return formatDisplayDateTime(new Date(dayRange.start.getTime() + clamped * 1000))
+  return formatDateTime(new Date(dayRange.start.getTime() + clamped * 1000))
 }
 
 export function formatTimeOnly(date) {
-  if (!date) return '--:--:--'
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return formatClock(date)
 }
 
 export function defaultTargetTime(earliestIso, latestIso) {
   const latest = parseIso(latestIso)
   if (!latest) return ''
-  return formatDisplayDateTime(latest)
+  return formatDateTime(latest)
 }

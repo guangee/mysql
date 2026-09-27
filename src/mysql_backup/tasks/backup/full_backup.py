@@ -8,13 +8,13 @@
 import os
 import sys
 import subprocess
-import shutil
-import tarfile
 from datetime import datetime
 from pathlib import Path
 
 from mysql_backup.core.backup_storage import (
     apply_local_retention,
+    cleanup_local_orphan_backups_on_s3,
+    pack_backup_directory,
     setup_s3 as setup_s3_storage,
     upload_and_verify_all,
     upload_metadata_to_all,
@@ -151,31 +151,13 @@ def perform_full_backup():
     except Exception:
         pass  # 忽略错误
     
-    # 重新压缩
-    log("重新压缩备份文件...")
-    backup_tar = FULL_BACKUP_DIR / "backup.tar.gz"
-    
-    try:
-        log("开始打包文件...")
-        with tarfile.open(backup_tar, "w:gz") as tar:
-            for item in FULL_BACKUP_DIR.iterdir():
-                if item.name != "backup.tar.gz":
-                    tar.add(item, arcname=item.name)
-        
-        backup_size = backup_tar.stat().st_size
-        backup_size_human = f"{backup_size / (1024*1024):.2f} MB"
-        log(f"压缩完成，文件大小: {backup_size_human}")
-        
-        log("清理源文件...")
-        for item in FULL_BACKUP_DIR.iterdir():
-            if item.name != "backup.tar.gz":
-                if item.is_file():
-                    item.unlink()
-                elif item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-        log("源文件清理完成")
-    except Exception as e:
-        log(f"警告: 压缩过程可能有问题: {e}，但继续执行...")
+    log("打包备份，并在写入压缩包后删除未压缩文件...")
+    backup_tar = pack_backup_directory(FULL_BACKUP_DIR, log)
+    if backup_tar is None:
+        log("错误: 打包失败，保留剩余本地文件")
+        return 1
+    backup_size_human = f"{backup_tar.stat().st_size / (1024*1024):.2f} MB"
+    log(f"压缩完成，文件大小: {backup_size_human}")
     
     # 保存最新的全量备份信息
     log("保存备份元数据...")
@@ -208,6 +190,7 @@ def perform_full_backup():
 
         if not apply_local_retention(FULL_BACKUP_DIR, verified=True, log=log):
             return 1
+        cleanup_local_orphan_backups_on_s3(BACKUP_BASE_DIR, log)
     else:
         log("S3 备份已禁用，仅保留本地备份")
         log(f"备份文件位置: {backup_tar}")

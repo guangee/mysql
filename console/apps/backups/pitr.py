@@ -63,6 +63,8 @@ def build_pitr_options() -> dict:
     return {
         "recoverable": recoverable,
         "reason": "" if recoverable else "还没有可用的全量备份",
+        "timezone": "Asia/Shanghai",
+        "binlog": _binlog_status(),
         "full_backups": list(reversed(full_items)),
         "incremental_backups": list(reversed(incremental_items)),
         "windows": windows,
@@ -72,6 +74,31 @@ def build_pitr_options() -> dict:
             "整实例恢复会停止 MySQL 并覆盖当前数据目录。",
             "单库恢复在临时卷上还原后再导入生产库，不影响其他库。",
         ],
+    }
+
+
+def _binlog_status() -> dict:
+    from apps.core.mysql_client import mysql_cursor
+
+    empty = {"log_bin": False, "format": "", "expire_days": None, "file_count": 0}
+    try:
+        with mysql_cursor() as cur:
+            cur.execute("SELECT @@log_bin, @@binlog_format, @@binlog_expire_logs_seconds")
+            log_bin, fmt, expire_seconds = cur.fetchone()
+            file_count = 0
+            try:
+                cur.execute("SHOW BINARY LOGS")
+                file_count = len(cur.fetchall())
+            except Exception:
+                file_count = 0
+    except Exception:
+        return empty
+    expire_seconds = int(expire_seconds or 0)
+    return {
+        "log_bin": bool(int(log_bin)),
+        "format": fmt or "",
+        "expire_days": round(expire_seconds / 86400, 1) if expire_seconds else None,
+        "file_count": file_count,
     }
 
 

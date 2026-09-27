@@ -105,7 +105,11 @@ ADD docker/sources.list /etc/apt/sources.list
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 \
+        tzdata \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo Asia/Shanghai > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Shanghai
 
 RUN mkdir -p /backups /opt/mysql-backup
 COPY src /opt/mysql-backup/src

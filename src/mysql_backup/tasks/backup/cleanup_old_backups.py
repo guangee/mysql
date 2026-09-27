@@ -59,12 +59,32 @@ def setup_s3():
     if not setup_s3_storage(log):
         sys.exit(1)
 
+def _remove_empty_backup_dirs(root: Path) -> int:
+    """没有备份内容的时间戳目录直接删掉，避免空目录一直占着。"""
+    if not root.is_dir():
+        return 0
+    removed = 0
+    for backup_dir in list(root.iterdir()):
+        if not backup_dir.is_dir():
+            continue
+        payload = [item for item in backup_dir.iterdir() if item.name != ".delete_after"]
+        if payload:
+            continue
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        if not backup_dir.exists():
+            log(f"删除空的本地备份目录: {backup_dir}")
+            removed += 1
+    return removed
+
+
 def cleanup_local_expired_backups():
     """清理本地过期的备份文件"""
     log("开始清理本地过期备份文件...")
     
     current_time = datetime.now().timestamp()
     cleaned_count = 0
+    cleaned_count += _remove_empty_backup_dirs(BACKUP_BASE_DIR / "full")
+    cleaned_count += _remove_empty_backup_dirs(BACKUP_BASE_DIR / "incremental")
     
     # 清理全量备份目录中的过期备份
     full_backup_dir = BACKUP_BASE_DIR / "full"

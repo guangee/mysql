@@ -200,10 +200,8 @@ def run_pitr_restore(target_time: str, full_backup_timestamp: str = "") -> subpr
         f"{_host_bind_path('/backups')}:/backups",
         "-v",
         f"{_host_bind_path('/shared')}:/shared",
-        "-v",
-        "/etc/localtime:/etc/localtime:ro",
-        "-v",
-        "/etc/timezone:/etc/timezone:ro",
+        "-e",
+        "TZ=Asia/Shanghai",
         image,
         "python3", "-m", "mysql_backup", "restore", "pitr",
         target_time,
@@ -259,8 +257,7 @@ def run_full_backup_restore(full_backup_timestamp: str) -> subprocess.CompletedP
         "-v", f"{_host_bind_path('/etc/mysql/conf.d')}:/etc/mysql/conf.d",
         "-v", f"{_host_bind_path('/backups')}:/backups",
         "-v", f"{_host_bind_path('/shared')}:/shared",
-        "-v", "/etc/localtime:/etc/localtime:ro",
-        "-v", "/etc/timezone:/etc/timezone:ro",
+        "-e", "TZ=Asia/Shanghai",
         image,
         "bash", "-c", restore_shell,
     ]
@@ -328,10 +325,8 @@ def _pitr_volume_mounts(volume_name: str) -> list[str]:
         f"{_host_bind_path('/backups')}:/backups",
         "-v",
         f"{_host_bind_path('/shared')}:/shared",
-        "-v",
-        "/etc/localtime:/etc/localtime:ro",
-        "-v",
-        "/etc/timezone:/etc/timezone:ro",
+        "-e",
+        "TZ=Asia/Shanghai",
     ]
 
 

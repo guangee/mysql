@@ -38,8 +38,6 @@ services:
       - ./data/mysql_config:/etc/mysql/conf.d
       - ./data/backups:/backups
       - ./shared:/shared
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
     ports:
       - "${MYSQL_PORT}:3306"
     networks:

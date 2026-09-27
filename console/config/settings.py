@@ -151,8 +151,8 @@ SHARED_STORAGES_FILE = Path(
 SHARED_BACKUP_POLICY_FILE = Path(
     os.environ.get("BACKUP_POLICY_FILE", "/shared/backup_policy.json")
 )
-# 备份文件名 YYYYMMDD_HHMMSS 使用的时区（与 MySQL 容器内备份脚本一致，默认 UTC）
-BACKUP_TIMEZONE = os.environ.get("BACKUP_TIMEZONE", "UTC")
+# 备份文件名 YYYYMMDD_HHMMSS 使用东八区，与界面展示一致
+BACKUP_TIMEZONE = os.environ.get("BACKUP_TIMEZONE", "Asia/Shanghai")
 RESTORE_TIMEZONE = "Asia/Shanghai"
 DOCKER_MYSQL_IMAGE = os.environ.get("MYSQL_IMAGE", "")
 MYSQL_DATA_DIR = Path(os.environ.get("MYSQL_DATA_DIR", str(PROJECT_ROOT / "mysql_data")))
@@ -187,10 +187,12 @@ HOST_METRICS_COLLECT_INTERVAL = int(os.environ.get("HOST_METRICS_COLLECT_INTERVA
 HOST_METRICS_RETENTION_SECONDS = int(os.environ.get("HOST_METRICS_RETENTION_SECONDS", "86400"))
 HOST_METRICS_MAX_POINTS = int(os.environ.get("HOST_METRICS_MAX_POINTS", "1440"))
 HOST_METRICS_DEFAULT_HOURS = float(os.environ.get("HOST_METRICS_DEFAULT_HOURS", "6"))
+DASHBOARD_SNAPSHOT_REDIS_KEY = "mysql_console:dashboard_snapshot"
+DATABASE_LIST_SNAPSHOT_REDIS_KEY = "mysql_console:database_list_snapshot"
 
 CELERY_BEAT_SCHEDULE = {
-    "collect-host-metrics": {
-        "task": "apps.core.tasks.collect_host_metrics_task",
+    "collect-dashboard-snapshot": {
+        "task": "apps.core.tasks.collect_dashboard_snapshot_task",
         "schedule": timedelta(seconds=HOST_METRICS_COLLECT_INTERVAL),
     },
 }

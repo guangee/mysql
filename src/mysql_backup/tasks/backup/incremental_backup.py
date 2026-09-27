@@ -18,6 +18,8 @@ from typing import Optional, Tuple
 from mysql_backup.core.backup_storage import (
     apply_local_retention,
     cleanup_local_full_base_if_on_s3,
+    cleanup_local_orphan_backups_on_s3,
+    pack_backup_directory,
     setup_s3 as setup_s3_storage,
     upload_and_verify_all,
     upload_metadata_to_all,
@@ -145,9 +147,18 @@ def download_latest_full_backup() -> bool:
         log(f"错误: 下载全量备份失败: {e}")
         return False
 
+def _drop_duplicate_archive(base_backup: Path) -> None:
+    """目录里已经有可用备份内容时，删掉同目录的 tar，避免两份同时占磁盘。"""
+    archive = base_backup / "backup.tar.gz"
+    if archive.is_file():
+        archive.unlink()
+        log(f"已删除与目录重复的压缩包: {archive}")
+
+
 def _prepare_local_full(base_backup: Path) -> bool:
     """全量目录需要 xtrabackup_checkpoints；若只剩 tar 包则先解压。"""
     if (base_backup / "xtrabackup_checkpoints").is_file():
+        _drop_duplicate_archive(base_backup)
         return True
     archive = base_backup / "backup.tar.gz"
     if not archive.is_file():
@@ -155,7 +166,10 @@ def _prepare_local_full(base_backup: Path) -> bool:
     log(f"本地全量目录缺少 checkpoints，从 {archive.name} 解压...")
     with tarfile.open(archive, "r:gz") as tar:
         tar.extractall(path=base_backup)
-    return (base_backup / "xtrabackup_checkpoints").is_file()
+    if not (base_backup / "xtrabackup_checkpoints").is_file():
+        return False
+    _drop_duplicate_archive(base_backup)
+    return True
 
 
 def get_base_backup() -> Tuple[Optional[Path], bool]:
@@ -280,25 +294,11 @@ def perform_incremental_backup():
     except Exception:
         pass  # 忽略错误
     
-    # 压缩备份（不进行 prepare，prepare 应该在恢复时进行）
-    log("压缩备份文件...")
-    backup_tar = INCREMENTAL_BACKUP_DIR / "backup.tar.gz"
-    
-    try:
-        with tarfile.open(backup_tar, "w:gz") as tar:
-            for item in INCREMENTAL_BACKUP_DIR.iterdir():
-                if item.name != "backup.tar.gz":
-                    tar.add(item, arcname=item.name)
-        
-        # 删除已打包的文件
-        for item in INCREMENTAL_BACKUP_DIR.iterdir():
-            if item.name != "backup.tar.gz":
-                if item.is_file():
-                    item.unlink()
-                elif item.is_dir():
-                    shutil.rmtree(item, ignore_errors=True)
-    except Exception as e:
-        log(f"警告: 压缩过程可能有问题: {e}")
+    log("打包增量备份，并在写入压缩包后删除未压缩文件...")
+    backup_tar = pack_backup_directory(INCREMENTAL_BACKUP_DIR, log)
+    if backup_tar is None:
+        log("错误: 打包失败，保留剩余本地文件")
+        return 1
     
     # 保存最新的增量备份信息
     try:
@@ -325,6 +325,7 @@ def perform_incremental_backup():
 
         if downloaded_from_s3 or LOCAL_BACKUP_RETENTION_HOURS == 0:
             cleanup_local_full_base_if_on_s3(base_backup, log)
+        cleanup_local_orphan_backups_on_s3(BACKUP_BASE_DIR, log)
     else:
         log("S3 备份已禁用，仅保留本地备份")
         log(f"备份文件位置: {backup_tar}")

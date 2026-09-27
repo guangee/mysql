@@ -5,6 +5,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import { formatClock } from '@/utils/datetime'
 
 const props = defineProps({
   title: { type: String, default: '' },
@@ -58,11 +59,7 @@ function buildOption() {
     grid: { left: 48, right: useRightAxis ? 48 : 16, top: 40, bottom: 28 },
     xAxis: {
       type: 'time',
-      axisLabel: { fontSize: 11, formatter: (v) => {
-        const d = new Date(v)
-        const pad = (n) => String(n).padStart(2, '0')
-        return `${pad(d.getHours())}:${pad(d.getMinutes())}`
-      } },
+      axisLabel: { fontSize: 11, formatter: (v) => formatClock(new Date(v)).slice(0, 5) },
     },
     yAxis: [
       {

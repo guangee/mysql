@@ -1,6 +1,7 @@
 <template>
   <div v-loading="loading">
     <h2 class="page-title">系统概览</h2>
+    <div v-if="data.collected_at" class="page-hint">数据更新于 {{ formatDateTime(data.collected_at) }}，后台每分钟采样一次</div>
 
     <el-row :gutter="16" class="mb-4">
       <el-col :span="6" :xs="24" :sm="12" :md="6">
@@ -217,6 +218,7 @@ const data = reactive({
   mysql_stats: null,
   host_stats: null,
   host_metrics_history: { points: [] },
+  collected_at: null,
   mysql_error: '',
   db_count: 0,
   storage_count: 0,
@@ -335,6 +337,6 @@ onUnmounted(() => {
 }
 .current-stats strong { color: #303133; }
 .disk-detail { margin-top: 16px; }
-.time-cell { white-space: nowrap; }
+.page-hint { margin: -8px 0 16px; font-size: 13px; color: #909399; }
 :deep(.time-col .cell) { white-space: nowrap; }
 </style>

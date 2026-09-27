@@ -62,19 +62,17 @@ from apps.backups.inventory import (
     sync_backup_file_index_with_retry,
 )
 from apps.core.mysql_tuning import apply_tuning, get_tuning_overview
-from apps.core.docker_client import apply_backup_crontab, get_mysql_host_stats, tail_backup_log
-from apps.core.metrics import get_host_metrics_history, maybe_collect_host_metrics
+from apps.core.docker_client import apply_backup_crontab, tail_backup_log
+from apps.core.metrics import get_host_metrics_history, load_dashboard_snapshot, load_database_list_snapshot
+from apps.core.tasks import collect_dashboard_snapshot_task
 from apps.core.models import AuditLog
 from apps.core.mysql_client import (
     MySQLClientError,
     change_user_password,
     create_business_user,
     create_database,
-    get_mysql_system_stats,
-    list_business_databases,
     list_mysql_users,
     list_system_accounts,
-    ping_mysql,
 )
 from apps.core.mysql_explorer import (
     build_table_select_sql,
@@ -174,27 +172,17 @@ class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        mysql_status = {"connected": False, "version": "-", "uptime_seconds": 0}
-        mysql_stats = None
-        host_stats = None
-        mysql_error = ""
-        db_count = 0
-        try:
-            mysql_status = ping_mysql()
-            mysql_status["connected"] = True
-            mysql_stats = get_mysql_system_stats()
-            mysql_status["uptime_seconds"] = mysql_stats["uptime_seconds"]
-            mysql_status["uptime_display"] = mysql_stats["uptime_display"]
-            db_count = len(list_business_databases())
-        except MySQLClientError as exc:
-            mysql_error = str(exc)
-
-        try:
-            host_stats = get_mysql_host_stats()
-            if host_stats and host_stats.get("available"):
-                maybe_collect_host_metrics(host_stats)
-        except Exception:
-            host_stats = host_stats or None
+        snapshot = load_dashboard_snapshot()
+        if snapshot is None:
+            collect_dashboard_snapshot_task.delay()
+            snapshot = {
+                "mysql_status": {"connected": False, "version": "-", "uptime_seconds": 0},
+                "mysql_stats": None,
+                "host_stats": None,
+                "mysql_error": "",
+                "db_count": 0,
+                "collected_at": None,
+            }
 
         hours = request.query_params.get("hours")
         try:
@@ -208,16 +196,16 @@ class DashboardView(APIView):
 
         return Response(
             {
-                "mysql_status": mysql_status,
-                "mysql_stats": mysql_stats,
-                "host_stats": host_stats,
+                "mysql_status": snapshot.get("mysql_status") or {"connected": False, "version": "-"},
+                "mysql_stats": snapshot.get("mysql_stats"),
+                "host_stats": snapshot.get("host_stats"),
                 "host_metrics_history": host_metrics_history,
-                "mysql_error": mysql_error,
-                "db_count": db_count,
+                "mysql_error": snapshot.get("mysql_error") or "",
+                "db_count": snapshot.get("db_count") or 0,
+                "collected_at": snapshot.get("collected_at"),
                 "storage_count": storages.count(),
                 "storage_ok_count": storages.filter(last_test_ok=True).count(),
                 "latest_jobs": BackupJobSerializer(latest_jobs, many=True).data,
-                "storages_exported": export_storages_config(),
             }
         )
 
@@ -226,41 +214,16 @@ class DatabaseListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        try:
-            databases = list_business_databases()
-            total_size = 0
-            total_connections = 0
-            for db in databases:
-                db["size_display"] = _format_size(db["size_bytes"])
-                db["data_size_display"] = _format_size(db["data_bytes"])
-                db["index_size_display"] = _format_size(db["index_bytes"])
-                total_size += db["size_bytes"]
-                total_connections += db["connection_count"]
-
-            mysql_stats = None
-            host_stats = None
-            try:
-                mysql_stats = get_mysql_system_stats()
-                host_stats = get_mysql_host_stats()
-            except MySQLClientError:
-                pass
-
-            return Response(
-                {
-                    "items": databases,
-                    "summary": {
-                        "database_count": len(databases),
-                        "total_size_bytes": total_size,
-                        "total_size_display": _format_size(total_size),
-                        "total_connections": total_connections,
-                        "mysql_connections": mysql_stats["connections"] if mysql_stats else None,
-                        "mysql_memory": mysql_stats["memory"] if mysql_stats else None,
-                        "host_stats": host_stats if host_stats and host_stats.get("available") else None,
-                    },
-                }
+        snapshot = load_database_list_snapshot()
+        if snapshot is None:
+            collect_dashboard_snapshot_task.delay()
+            return Response({"items": [], "summary": None, "collected_at": None, "mysql_error": ""})
+        if snapshot.get("mysql_error") and not snapshot.get("items"):
+            return _mysql_error_response(
+                MySQLClientError(snapshot["mysql_error"]),
+                "/api/databases/",
             )
-        except MySQLClientError as exc:
-            return _mysql_error_response(exc, "/api/databases/")
+        return Response(snapshot)
 
     def post(self, request):
         serializer = CreateDatabaseSerializer(data=request.data)
@@ -286,6 +249,7 @@ class DatabaseListView(APIView):
             operator=request.user,
             ip_address=get_client_ip(request),
         )
+        collect_dashboard_snapshot_task.delay()
         return Response(result, status=status.HTTP_201_CREATED)
 
 

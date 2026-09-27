@@ -20,6 +20,41 @@ def _last_collect_key() -> str:
     return getattr(settings, "HOST_METRICS_LAST_COLLECT_KEY", "mysql_console:host_metrics:last_collect")
 
 
+def _snapshot_key() -> str:
+    return getattr(settings, "DASHBOARD_SNAPSHOT_REDIS_KEY", "mysql_console:dashboard_snapshot")
+
+
+def save_dashboard_snapshot(payload: dict) -> None:
+    _redis().set(_snapshot_key(), json.dumps(payload, ensure_ascii=False))
+
+
+def load_dashboard_snapshot() -> dict | None:
+    return _load_json(_snapshot_key())
+
+
+def _database_list_key() -> str:
+    return getattr(settings, "DATABASE_LIST_SNAPSHOT_REDIS_KEY", "mysql_console:database_list_snapshot")
+
+
+def save_database_list_snapshot(payload: dict) -> None:
+    _redis().set(_database_list_key(), json.dumps(payload, ensure_ascii=False))
+
+
+def load_database_list_snapshot() -> dict | None:
+    return _load_json(_database_list_key())
+
+
+def _load_json(key: str) -> dict | None:
+    raw = _redis().get(key)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def extract_metric_point(stats: dict) -> dict | None:
     if not stats or not stats.get("available"):
         return None

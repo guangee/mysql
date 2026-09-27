@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, Optional
@@ -31,7 +32,7 @@ BACKUP_FILENAME_TS = re.compile(r"backup_(\d{8}_\d{6})")
 
 
 def backup_timezone() -> ZoneInfo:
-    return ZoneInfo(os.environ.get("BACKUP_TIMEZONE", "UTC"))
+    return ZoneInfo(os.environ.get("BACKUP_TIMEZONE", "Asia/Shanghai"))
 
 
 def parse_backup_filename_timestamp(filename: str) -> datetime | None:
@@ -346,6 +347,32 @@ def upload_metadata_to_all(relative_key: str, content: str, log: Callable[[str],
             log(f"[存储:{name}] 元数据上传警告: {e}")
 
 
+def pack_backup_directory(backup_dir: Path, log: Callable[[str], None]) -> Optional[Path]:
+    """
+    将备份目录打成 backup.tar.gz。
+    每个条目写入压缩包后立即删除，避免未压缩副本和压缩包同时占满磁盘。
+    """
+    archive = backup_dir / "backup.tar.gz"
+    try:
+        with tarfile.open(archive, "w:gz") as tar:
+            for item in list(backup_dir.iterdir()):
+                if item.name == "backup.tar.gz":
+                    continue
+                tar.add(item, arcname=item.name)
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+    except Exception as exc:
+        log(f"错误: 打包备份失败: {exc}")
+        return None
+
+    if not archive.is_file() or archive.stat().st_size <= 0:
+        log("错误: 打包后的备份文件为空")
+        return None
+    return archive
+
+
 def apply_local_retention(
     backup_dir: Path,
     verified: bool,
@@ -462,13 +489,6 @@ def cleanup_local_orphan_backups_on_s3(
         return 0
 
     cleaned = 0
-    latest_full_ts = ""
-    latest_full_marker = backup_base_dir / "LATEST_FULL_BACKUP_TIMESTAMP"
-    if latest_full_marker.exists():
-        try:
-            latest_full_ts = latest_full_marker.read_text().strip()
-        except Exception:
-            pass
 
     for backup_type, s3_path_fn in (
         ("full", s3_full_backup_path),
@@ -490,9 +510,6 @@ def cleanup_local_orphan_backups_on_s3(
                 if not verify_s3_upload(backup_tar, s3_path, log):
                     continue
             elif not s3_object_exists(s3_path):
-                continue
-            elif backup_type == "full" and timestamp == latest_full_ts:
-                # 当前标记的全量目录可能正被增量备份使用，跳过
                 continue
 
             try:

@@ -1,7 +1,10 @@
 <template>
   <div v-loading="loading">
     <div class="page-header">
-      <h2 class="page-title">业务数据库</h2>
+      <div>
+        <h2 class="page-title">业务数据库</h2>
+        <div v-if="collectedAt" class="page-hint">数据更新于 {{ formatDateTime(collectedAt) }}，后台每分钟采样一次</div>
+      </div>
       <el-button type="primary" @click="openCreate">新建数据库</el-button>
     </div>
 
@@ -156,6 +159,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { accountApi, databaseApi } from '@/api'
+import { formatDateTime } from '@/utils/datetime'
 
 const router = useRouter()
 
@@ -164,6 +168,7 @@ const creating = ref(false)
 const createVisible = ref(false)
 const items = ref([])
 const summary = ref(null)
+const collectedAt = ref('')
 const businessUsers = ref([])
 const createForm = reactive({
   name: '',
@@ -194,8 +199,9 @@ async function load() {
   loading.value = true
   try {
     const { data } = await databaseApi.list()
-    items.value = data.items
+    items.value = data.items || []
     summary.value = data.summary
+    collectedAt.value = data.collected_at || ''
   } finally {
     loading.value = false
   }
@@ -258,6 +264,7 @@ onMounted(load)
   margin-bottom: 16px;
 }
 .page-title { margin: 0; }
+.page-hint { margin-top: 4px; font-size: 13px; color: #909399; }
 .summary-row { margin-bottom: 16px; }
 .summary-card { min-height: 96px; }
 .summary-label { color: #909399; font-size: 12px; margin-bottom: 4px; }
