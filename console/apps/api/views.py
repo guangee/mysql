@@ -723,12 +723,7 @@ class BackupPitrPreviewView(APIView):
         serializer = BackupPitrPreviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        return Response(
-            preview_pitr_target(
-                data["target_time"],
-                data.get("full_backup_timestamp") or None,
-            )
-        )
+        return Response(preview_pitr_target(data["target_time"]))
 
 
 class BackupPitrJobListView(APIView):
@@ -758,16 +753,14 @@ class BackupPitrTriggerView(APIView):
         serializer = BackupPitrTriggerSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        preview = preview_pitr_target(
-            data["target_time"],
-            data.get("full_backup_timestamp") or None,
-        )
+        preview = preview_pitr_target(data["target_time"])
         if not preview.get("valid"):
             return Response({"detail": preview.get("reason") or "目标时间不可恢复"}, status=status.HTTP_400_BAD_REQUEST)
 
+        plan = preview.get("plan") or {}
         job = BackupPitrJob.objects.create(
             target_time=data["target_time"],
-            full_backup_timestamp=data.get("full_backup_timestamp") or "",
+            full_backup_timestamp=plan.get("full_backup_timestamp") or "",
             status="pending",
             plan=preview.get("plan") or {},
             created_by=request.user,
@@ -795,7 +788,6 @@ class DatabasePitrPreviewView(APIView):
                 data["target_time"],
                 data["write_mode"],
                 data.get("target_database") or "",
-                data.get("full_backup_timestamp") or None,
             )
         except ValueError as exc:
             return Response({"valid": False, "reason": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -835,19 +827,19 @@ class DatabasePitrTriggerView(APIView):
                 data["target_time"],
                 data["write_mode"],
                 data.get("target_database") or "",
-                data.get("full_backup_timestamp") or None,
             )
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         if not preview.get("valid"):
             return Response({"detail": preview.get("reason") or "目标时间不可恢复"}, status=status.HTTP_400_BAD_REQUEST)
 
+        plan = preview.get("plan") or {}
         job = DatabasePitrJob.objects.create(
             source_database=data["source_database"],
             target_database=preview["target_database"],
             write_mode=data["write_mode"],
             target_time=data["target_time"],
-            full_backup_timestamp=data.get("full_backup_timestamp") or "",
+            full_backup_timestamp=plan.get("full_backup_timestamp") or "",
             status="pending",
             plan=preview.get("plan") or {},
             created_by=request.user,

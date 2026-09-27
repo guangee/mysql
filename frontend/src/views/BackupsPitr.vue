@@ -62,16 +62,7 @@
               />
               <el-button class="ml-2 preview-btn" :loading="previewing" :disabled="!targetAt" @click="preview">预览计划</el-button>
             </el-form-item>
-            <el-form-item label="指定全量备份">
-              <el-select v-model="fullBackupTs" clearable filterable placeholder="留空则自动选择最近备份" style="width: 320px">
-                <el-option
-                  v-for="item in options.full_backups || []"
-                  :key="item.timestamp"
-                  :label="`${item.display_time} (${item.timestamp})`"
-                  :value="item.timestamp"
-                />
-              </el-select>
-            </el-form-item>
+            <div class="form-hint">系统会按目标时间自动选用不晚于该时刻的最近全量备份，并带上之后的增量。</div>
             <el-alert v-if="previewResult" :type="previewResult.valid ? 'success' : 'error'" :closable="false" show-icon class="preview-box">
               <template v-if="previewResult.valid">
                 将基于 {{ previewResult.plan?.base_backup_type === 'full' ? '全量' : '增量' }}
@@ -176,16 +167,7 @@
             <el-form-item v-if="dbWriteMode === 'new_database'" label="新库名">
               <el-input v-model="dbTargetName" placeholder="例如 demo_restored_20250601" style="width: 280px" />
             </el-form-item>
-            <el-form-item label="指定全量备份">
-              <el-select v-model="dbFullBackupTs" clearable filterable placeholder="留空则自动选择" style="width: 320px">
-                <el-option
-                  v-for="item in options.full_backups || []"
-                  :key="item.timestamp"
-                  :label="`${item.display_time} (${item.timestamp})`"
-                  :value="item.timestamp"
-                />
-              </el-select>
-            </el-form-item>
+            <div class="form-hint">系统会按目标时间自动选用不晚于该时刻的最近全量备份，并带上之后的增量。</div>
             <el-alert v-if="dbPreviewResult" :type="dbPreviewResult.valid ? 'success' : 'error'" :closable="false" show-icon class="preview-box">
               <template v-if="dbPreviewResult.valid">
                 将恢复库 <code>{{ dbPreviewResult.source_database }}</code> 至
@@ -263,7 +245,6 @@ const pitrRunning = ref(false)
 const options = ref({ recoverable: false, full_backups: [], incremental_backups: [], windows: [] })
 const jobs = ref([])
 const targetAt = ref('')
-const fullBackupTs = ref('')
 const previewResult = ref(null)
 
 const dbPreviewing = ref(false)
@@ -275,7 +256,6 @@ const dbSource = ref('')
 const dbTargetAt = ref('')
 const dbWriteMode = ref('new_database')
 const dbTargetName = ref('')
-const dbFullBackupTs = ref('')
 const dbPreviewResult = ref(null)
 
 let pollTimer = null
@@ -334,9 +314,7 @@ async function preview() {
   if (!targetAt.value) return
   previewing.value = true
   try {
-    const payload = { target_time: targetAt.value }
-    if (fullBackupTs.value) payload.full_backup_timestamp = fullBackupTs.value
-    const { data } = await backupApi.pitrPreview(payload)
+    const { data } = await backupApi.pitrPreview({ target_time: targetAt.value })
     previewResult.value = data
   } finally {
     previewing.value = false
@@ -356,9 +334,7 @@ async function triggerRestore() {
 
   triggering.value = true
   try {
-    const payload = { target_time: targetAt.value }
-    if (fullBackupTs.value) payload.full_backup_timestamp = fullBackupTs.value
-    await backupApi.pitrTrigger(payload)
+    await backupApi.pitrTrigger({ target_time: targetAt.value })
     ElMessage.success('整实例恢复任务已提交，MySQL 将短暂不可用')
     await loadJobs()
     startPoll()
@@ -376,7 +352,6 @@ function buildDbPayload() {
   if (dbWriteMode.value === 'new_database') {
     payload.target_database = dbTargetName.value.trim()
   }
-  if (dbFullBackupTs.value) payload.full_backup_timestamp = dbFullBackupTs.value
   return payload
 }
 
@@ -467,6 +442,11 @@ onUnmounted(stopPoll)
 .range-sep { margin: 0 6px; color: #909399; }
 .card-sub { color: #909399; font-size: 12px; margin-top: 8px; }
 .muted { color: #909399; font-weight: 400; }
+.form-hint {
+  margin: -8px 0 16px 120px;
+  color: #909399;
+  font-size: 13px;
+}
 .preview-box { margin: 0 0 16px 120px; max-width: 640px; }
 .preview-btn { vertical-align: top; margin-top: 4px; }
 .notes { margin: 12px 0 0; padding-left: 18px; color: #909399; font-size: 13px; }
