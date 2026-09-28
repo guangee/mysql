@@ -535,6 +535,127 @@ def _parse_docker_size_pair(text: str) -> tuple[int, int]:
     return to_bytes(used), to_bytes(total)
 
 
+def get_mysql_service_status() -> dict:
+    """查询生产 MySQL 容器运行状态与就绪情况。"""
+    container = settings.DOCKER_MYSQL_CONTAINER
+    result = subprocess.run(
+        ["docker", "inspect", container, "--format", "{{json .}}"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or f"无法 inspect 容器 {container}").strip()
+        return {
+            "container": container,
+            "exists": False,
+            "running": False,
+            "ready": False,
+            "status": "not_found",
+            "error": err[:300],
+        }
+
+    info = json.loads(result.stdout or "{}")
+    state = info.get("State") or {}
+    status = str(state.get("Status") or "unknown")
+    running = bool(state.get("Running"))
+    ready = False
+    ready_error = ""
+    if running:
+        try:
+            ready = _mysql_container_ping(container, timeout=10)
+        except Exception as exc:
+            ready_error = str(exc)[:200]
+
+    return {
+        "container": container,
+        "exists": True,
+        "running": running,
+        "ready": ready,
+        "status": status,
+        "paused": bool(state.get("Paused")),
+        "restarting": bool(state.get("Restarting")),
+        "oom_killed": bool(state.get("OOMKilled")),
+        "pid": _safe_int(state.get("Pid")),
+        "exit_code": _safe_int(state.get("ExitCode")),
+        "error": (state.get("Error") or ready_error or "")[:300],
+        "started_at": state.get("StartedAt") or "",
+        "finished_at": state.get("FinishedAt") or "",
+        "image": ((info.get("Config") or {}).get("Image") or ""),
+    }
+
+
+def _mysql_container_ping(container_name: str, timeout: int = 15) -> bool:
+    password = settings.MYSQL_ROOT_PASSWORD
+    result = subprocess.run(
+        [
+            "docker",
+            "exec",
+            container_name,
+            "mysqladmin",
+            "ping",
+            "-h127.0.0.1",
+            "-uroot",
+            f"-p{password}",
+            "--silent",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def control_mysql_service(action: str, wait_ready: bool = True, ready_timeout: int = 180) -> dict:
+    """对生产 MySQL 容器执行 start / stop / restart。"""
+    action = (action or "").strip().lower()
+    if action not in {"start", "stop", "restart"}:
+        raise ValueError("action 只能是 start、stop 或 restart")
+
+    container = settings.DOCKER_MYSQL_CONTAINER
+    before = get_mysql_service_status()
+    if not before.get("exists"):
+        raise DockerClientError(before.get("error") or f"容器 {container} 不存在")
+
+    if action == "start" and before.get("running"):
+        status = get_mysql_service_status()
+        status["action"] = action
+        status["message"] = "MySQL 已在运行"
+        return status
+    if action == "stop" and not before.get("running"):
+        status = get_mysql_service_status()
+        status["action"] = action
+        status["message"] = "MySQL 已处于停止状态"
+        return status
+
+    result = subprocess.run(
+        ["docker", action, container],
+        capture_output=True,
+        text=True,
+        timeout=120 if action != "restart" else 180,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise DockerClientError(
+            (result.stderr or result.stdout or f"docker {action} {container} 失败").strip()[:500]
+        )
+
+    if action in {"start", "restart"} and wait_ready:
+        wait_mysql_container_ready(container, timeout=ready_timeout)
+
+    status = get_mysql_service_status()
+    status["action"] = action
+    if action == "stop":
+        status["message"] = "MySQL 已停止"
+    elif status.get("ready"):
+        status["message"] = "MySQL 已启动并就绪" if action == "start" else "MySQL 已重启并就绪"
+    else:
+        status["message"] = f"docker {action} 已执行，等待 MySQL 就绪中"
+    return status
+
+
 def get_mysql_host_stats() -> dict:
     """采集 MySQL 容器的主机级负载、内存与磁盘占用"""
     container = settings.DOCKER_MYSQL_CONTAINER

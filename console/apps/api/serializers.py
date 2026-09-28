@@ -333,6 +333,27 @@ class BackupFullRestoreTriggerSerializer(serializers.Serializer):
 
 class MySQLTuningUpdateSerializer(serializers.Serializer):
     settings = serializers.DictField(
-        child=serializers.IntegerField(),
-        help_text="参数名 -> 整数值",
+        child=serializers.JSONField(),
+        required=False,
+        help_text="参数名 -> 数值或枚举字符串",
     )
+    preset_memory_gb = serializers.ChoiceField(
+        choices=[(1, "1G"), (2, "2G"), (4, "4G"), (8, "8G"), (16, "16G"), (32, "32G"), (64, "64G"), (128, "128G")],
+        required=False,
+        help_text="按分配给 MySQL 的内存一键应用常见优化",
+    )
+    recommended_memory_gb = serializers.ChoiceField(
+        choices=[(1, "1G"), (2, "2G"), (4, "4G"), (8, "8G"), (16, "16G"), (32, "32G"), (64, "64G"), (128, "128G")],
+        required=False,
+        help_text="刷新 overview 时用于计算推荐值的内存档位",
+    )
+
+    def validate(self, attrs):
+        if not attrs.get("settings") and attrs.get("preset_memory_gb") is None:
+            raise serializers.ValidationError("请提供 settings 或 preset_memory_gb")
+        return attrs
+
+
+class MySQLServiceActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["start", "stop", "restart"])
+    wait_ready = serializers.BooleanField(required=False, default=True)

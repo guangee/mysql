@@ -31,8 +31,10 @@ export const databaseApi = {
 }
 
 export const mysqlApi = {
-  settings: () => http.get('/mysql/settings/'),
+  settings: (params = {}) => http.get('/mysql/settings/', { params }),
   updateSettings: (data) => http.patch('/mysql/settings/', data),
+  serviceStatus: () => http.get('/mysql/service/'),
+  controlService: (data) => http.post('/mysql/service/', data, { timeout: 240000 }),
 }
 
 export const accountApi = {

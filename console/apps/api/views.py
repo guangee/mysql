@@ -31,6 +31,7 @@ from apps.api.serializers import (
     DatabaseExportSerializer,
     DatabaseQuerySerializer,
     LoginSerializer,
+    MySQLServiceActionSerializer,
     MySQLTuningUpdateSerializer,
     StorageBackendSerializer,
 )
@@ -61,8 +62,14 @@ from apps.backups.inventory import (
     is_index_stale,
     sync_backup_file_index_with_retry,
 )
-from apps.core.mysql_tuning import apply_tuning, get_tuning_overview
-from apps.core.docker_client import apply_backup_crontab, tail_backup_log
+from apps.core.mysql_tuning import apply_memory_preset, apply_tuning, get_tuning_overview
+from apps.core.docker_client import (
+    DockerClientError,
+    apply_backup_crontab,
+    control_mysql_service,
+    get_mysql_service_status,
+    tail_backup_log,
+)
 from apps.core.metrics import (
     get_database_metrics_history,
     get_host_metrics_history,
@@ -975,8 +982,15 @@ class MySQLSettingsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        recommended_gb = request.query_params.get("recommended_memory_gb")
         try:
-            return Response(get_tuning_overview())
+            recommended = int(recommended_gb) if recommended_gb not in (None, "") else None
+        except (TypeError, ValueError):
+            return Response({"detail": "recommended_memory_gb 必须是整数"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Response(get_tuning_overview(recommended_memory_gb=recommended))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except MySQLClientError as exc:
             return _mysql_error_response(exc, "/api/mysql/settings/")
 
@@ -986,8 +1000,17 @@ class MySQLSettingsView(APIView):
 
         serializer = MySQLTuningUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         try:
-            result = apply_tuning(serializer.validated_data["settings"])
+            if data.get("preset_memory_gb") is not None:
+                result = apply_memory_preset(int(data["preset_memory_gb"]))
+                target = f"preset={data['preset_memory_gb']}G"
+            else:
+                result = apply_tuning(
+                    data.get("settings") or {},
+                    recommended_memory_gb=data.get("recommended_memory_gb"),
+                )
+                target = ", ".join(f"{k}={v}" for k, v in (data.get("settings") or {}).items())
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except MySQLClientError as exc:
@@ -995,7 +1018,43 @@ class MySQLSettingsView(APIView):
 
         AuditLog.objects.create(
             action="mysql_settings_update",
-            target=", ".join(f"{k}={v}" for k, v in serializer.validated_data["settings"].items()),
+            target=target[:500],
+            operator=request.user,
+            ip_address=get_client_ip(request),
+        )
+        return Response(result)
+
+
+class MySQLServiceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(get_mysql_service_status())
+
+    def post(self, request):
+        if not IsSuperUser().has_permission(request, self):
+            return Response({"detail": "需要超级管理员权限"}, status=status.HTTP_403_FORBIDDEN)
+        if _restore_task_running():
+            return Response(
+                {"detail": "当前有恢复任务进行中，请完成后再操作 MySQL 启停"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        serializer = MySQLServiceActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action_name = serializer.validated_data["action"]
+        wait_ready = serializer.validated_data.get("wait_ready", True)
+        try:
+            result = control_mysql_service(action_name, wait_ready=wait_ready)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except DockerClientError as exc:
+            logger.error("MySQL 服务控制失败 action=%s: %s", action_name, exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        AuditLog.objects.create(
+            action=f"mysql_service_{action_name}",
+            target=result.get("container") or "mysql",
             operator=request.user,
             ip_address=get_client_ip(request),
         )
