@@ -356,6 +356,7 @@ def list_mysql_users(include_system: bool = False) -> list[dict]:
         if not include_system and user in system_users:
             continue
         grants = get_user_grants(user, host)
+        grant_tree = build_grant_tree(grants)
         users.append(
             {
                 "user": user,
@@ -363,6 +364,9 @@ def list_mysql_users(include_system: bool = False) -> list[dict]:
                 "locked": bool(locked),
                 "expired": bool(expired),
                 "grants_summary": summarize_grants(grants),
+                "grants_raw": grants,
+                "grant_tree": grant_tree,
+                "database_count": sum(1 for node in grant_tree if node.get("scope") == "database"),
                 "is_system": user in {"root"} or user.startswith("mysql."),
             }
         )
@@ -378,17 +382,195 @@ def get_user_grants(user: str, host: str) -> list[str]:
 def summarize_grants(grants: list[str]) -> str:
     if not grants:
         return "无权限"
+    if any("ALL PRIVILEGES" in g and " ON *.*" in g for g in grants):
+        return "全局 ALL PRIVILEGES"
     if any("ALL PRIVILEGES" in g for g in grants):
+        dbs = _extract_grant_databases(grants)
+        if dbs:
+            return f"ALL · {', '.join(dbs[:5])}"
         return "ALL PRIVILEGES"
+    dbs = _extract_grant_databases(grants)
+    return ", ".join(dbs[:5]) or "见详情"
+
+
+def _extract_grant_databases(grants: list[str]) -> list[str]:
     dbs = set()
     for g in grants:
-        if " ON `" in g:
-            part = g.split(" ON `", 1)[1].split("`", 1)[0]
-            dbs.add(part)
-        elif " ON " in g:
-            part = g.split(" ON ", 1)[1].split(" ", 1)[0].strip("`")
-            dbs.add(part)
-    return ", ".join(sorted(dbs)[:5]) or "见详情"
+        parsed = _parse_grant_statement(g)
+        if not parsed:
+            continue
+        if parsed["scope"] == "global":
+            dbs.add("*.*")
+        elif parsed["database"]:
+            dbs.add(parsed["database"])
+    return sorted(dbs)
+
+
+def _parse_grant_statement(statement: str) -> dict | None:
+    """解析 SHOW GRANTS 单行，返回 scope/database/table/privileges。"""
+    text = (statement or "").strip()
+    if not text.upper().startswith("GRANT "):
+        return None
+    # GRANT ... ON <target> TO ...
+    match = re.search(
+        r"^GRANT\s+(.+?)\s+ON\s+(.+?)\s+TO\s+",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return None
+    priv_part = re.sub(r"\s+", " ", match.group(1)).strip()
+    target = match.group(2).strip()
+    with_grant = "WITH GRANT OPTION" in text.upper()
+
+    scope = "database"
+    database = ""
+    table = ""
+    if target == "*.*":
+        scope = "global"
+        database = "*"
+        table = "*"
+    else:
+        # `db`.* | `db`.`tbl` | db.* | db.tbl
+        target_match = re.match(
+            r"^(?:`([^`]+)`|([A-Za-z0-9$_]+))\.(?:\*|`([^`]+)`|([A-Za-z0-9$_]+))$",
+            target,
+        )
+        if not target_match:
+            return {
+                "scope": "other",
+                "database": "",
+                "table": "",
+                "privileges": priv_part,
+                "privilege_list": [p.strip() for p in priv_part.split(",") if p.strip()],
+                "with_grant_option": with_grant,
+                "raw": text,
+                "level_label": _privilege_level_label(priv_part),
+            }
+        database = target_match.group(1) or target_match.group(2) or ""
+        table_name = target_match.group(3) or target_match.group(4)
+        if table_name:
+            scope = "table"
+            table = table_name
+        else:
+            scope = "database"
+            table = "*"
+
+    return {
+        "scope": scope,
+        "database": database,
+        "table": table,
+        "privileges": priv_part,
+        "privilege_list": [p.strip() for p in priv_part.split(",") if p.strip()],
+        "with_grant_option": with_grant,
+        "raw": text,
+        "level_label": _privilege_level_label(priv_part),
+    }
+
+
+def _privilege_level_label(priv_part: str) -> str:
+    upper = priv_part.upper()
+    if "ALL PRIVILEGES" in upper or upper.strip() == "ALL":
+        return "全部权限"
+    tokens = {p.strip().upper() for p in priv_part.split(",") if p.strip()}
+    read_only = {"SELECT"}
+    read_write = {
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "CREATE",
+        "DROP",
+        "ALTER",
+        "INDEX",
+        "TRIGGER",
+        "REFERENCES",
+    }
+    if tokens and tokens <= read_only:
+        return "只读"
+    if tokens and tokens <= read_write and ("INSERT" in tokens or "UPDATE" in tokens or "DELETE" in tokens):
+        return "读写"
+    if tokens == {"USAGE"}:
+        return "USAGE"
+    return "自定义"
+
+
+def build_grant_tree(grants: list[str]) -> list[dict]:
+    """把 grants 归并为前端树：全局节点 + 各数据库节点（含表级子节点）。"""
+    global_nodes: list[dict] = []
+    db_map: dict[str, dict] = {}
+
+    for statement in grants:
+        parsed = _parse_grant_statement(statement)
+        if not parsed:
+            continue
+        if parsed["scope"] == "global":
+            global_nodes.append(
+                {
+                    "id": f"global:{parsed['privileges']}",
+                    "label": f"全局 *.* · {parsed['level_label']}",
+                    "scope": "global",
+                    "database": "*",
+                    "table": "*",
+                    "privileges": parsed["privileges"],
+                    "privilege_list": parsed["privilege_list"],
+                    "level_label": parsed["level_label"],
+                    "with_grant_option": parsed["with_grant_option"],
+                    "raw": parsed["raw"],
+                    "children": [],
+                }
+            )
+            continue
+
+        db_name = parsed["database"] or "(unknown)"
+        node = db_map.setdefault(
+            db_name,
+            {
+                "id": f"db:{db_name}",
+                "label": db_name,
+                "scope": "database",
+                "database": db_name,
+                "table": "",
+                "privileges": "",
+                "privilege_list": [],
+                "level_label": "",
+                "with_grant_option": False,
+                "raw": "",
+                "children": [],
+            },
+        )
+        if parsed["scope"] == "database":
+            node["privileges"] = parsed["privileges"]
+            node["privilege_list"] = parsed["privilege_list"]
+            node["level_label"] = parsed["level_label"]
+            node["with_grant_option"] = parsed["with_grant_option"]
+            node["raw"] = parsed["raw"]
+            node["label"] = f"{db_name} · {parsed['level_label']}"
+        else:
+            node["children"].append(
+                {
+                    "id": f"table:{db_name}.{parsed['table']}:{parsed['privileges']}",
+                    "label": f"表 {parsed['table']} · {parsed['level_label']}",
+                    "scope": "table",
+                    "database": db_name,
+                    "table": parsed["table"],
+                    "privileges": parsed["privileges"],
+                    "privilege_list": parsed["privilege_list"],
+                    "level_label": parsed["level_label"],
+                    "with_grant_option": parsed["with_grant_option"],
+                    "raw": parsed["raw"],
+                    "children": [],
+                }
+            )
+
+    for node in db_map.values():
+        if not node["level_label"] and node["children"]:
+            node["label"] = f"{node['database']} · 仅表级授权"
+            node["level_label"] = "仅表级"
+        node["children"].sort(key=lambda item: item.get("table") or item.get("label") or "")
+
+    result = global_nodes + [db_map[name] for name in sorted(db_map.keys())]
+    return result
 
 
 def change_user_password(user: str, host: str, new_password: str) -> None:

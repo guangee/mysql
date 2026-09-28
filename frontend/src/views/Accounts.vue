@@ -2,6 +2,7 @@
   <div v-loading="loading">
     <div class="page-header">
       <h2 class="page-title">账号与凭证</h2>
+      <div class="page-hint">展开业务用户可查看其对各数据库/表的权限树</div>
     </div>
 
     <el-tabs v-model="tab">
@@ -9,12 +10,48 @@
         <div class="tab-toolbar">
           <el-button type="primary" size="small" @click="openCreateUser">新建用户</el-button>
         </div>
-        <el-table :data="businessUsers" stripe>
-          <el-table-column prop="user" label="用户">
+        <el-table :data="businessUsers" stripe row-key="rowKey" @expand-change="onExpandChange">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <div class="grant-panel">
+                <div v-if="!(row.grant_tree || []).length" class="muted">暂无授权信息</div>
+                <el-tree
+                  v-else
+                  :data="row.grant_tree"
+                  node-key="id"
+                  default-expand-all
+                  :expand-on-click-node="false"
+                  class="grant-tree"
+                >
+                  <template #default="{ data }">
+                    <div class="grant-node">
+                      <el-tag size="small" :type="scopeTagType(data.scope)" class="scope-tag">
+                        {{ scopeLabel(data.scope) }}
+                      </el-tag>
+                      <span class="grant-label">{{ data.label }}</span>
+                      <el-tag v-if="data.level_label" size="small" effect="plain" class="level-tag">
+                        {{ data.level_label }}
+                      </el-tag>
+                      <el-tag v-if="data.with_grant_option" size="small" type="warning" effect="plain">
+                        GRANT OPTION
+                      </el-tag>
+                      <span v-if="data.privileges" class="priv-text" :title="data.privileges">
+                        {{ data.privileges }}
+                      </span>
+                    </div>
+                  </template>
+                </el-tree>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="user" label="用户" min-width="120">
             <template #default="{ row }"><code>{{ row.user }}</code></template>
           </el-table-column>
           <el-table-column prop="host" label="Host" width="140" />
-          <el-table-column prop="grants_summary" label="权限摘要" />
+          <el-table-column label="授权库数" width="100" align="right">
+            <template #default="{ row }">{{ row.database_count ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column prop="grants_summary" label="权限摘要" min-width="180" show-overflow-tooltip />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button size="small" @click="openPassword('business', row)">修改密码</el-button>
@@ -129,11 +166,27 @@ const dialogTitle = computed(() => {
   return t.type === 'business' ? `修改 ${t.user}@${t.host}` : `修改系统账号 (${t.role})`
 })
 
+function scopeLabel(scope) {
+  return { global: '全局', database: '数据库', table: '表', other: '其他' }[scope] || scope
+}
+
+function scopeTagType(scope) {
+  return { global: 'danger', database: 'primary', table: 'success', other: 'info' }[scope] || 'info'
+}
+
+function onExpandChange() {
+  // 预留：展开时如需懒加载可接这里
+}
+
 async function load() {
   loading.value = true
   try {
     const [biz, sys] = await Promise.all([accountApi.businessList(), accountApi.systemList()])
-    businessUsers.value = biz.data.items
+    businessUsers.value = (biz.data.items || []).map((item) => ({
+      ...item,
+      rowKey: `${item.user}@${item.host}`,
+      grant_tree: item.grant_tree || [],
+    }))
     systemAccounts.value = sys.data.items
   } finally {
     loading.value = false
@@ -215,7 +268,33 @@ onMounted(load)
 
 <style scoped>
 .page-header { margin-bottom: 8px; }
-.page-title { margin: 0 0 12px; }
+.page-title { margin: 0 0 4px; }
+.page-hint { color: #909399; font-size: 13px; margin-bottom: 12px; }
 .tab-toolbar { margin-bottom: 12px; }
 .muted { color: #909399; font-size: 12px; }
+.grant-panel {
+  padding: 8px 12px 12px 36px;
+  background: #fafbfc;
+}
+.grant-tree { background: transparent; }
+.grant-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+  width: 100%;
+}
+.scope-tag { flex-shrink: 0; }
+.grant-label { font-weight: 500; color: #303133; }
+.level-tag { flex-shrink: 0; }
+.priv-text {
+  color: #909399;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
 </style>

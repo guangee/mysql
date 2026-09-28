@@ -103,9 +103,10 @@ print("Backup file index sync scheduled")
 EOF
 
 python manage.py shell <<'EOF'
-from apps.core.tasks import collect_dashboard_snapshot_task
+from apps.core.tasks import collect_dashboard_snapshot_task, sync_schema_inventory_task
 collect_dashboard_snapshot_task.delay()
-print("Dashboard snapshot collection scheduled")
+sync_schema_inventory_task.delay()
+print("Dashboard snapshot and schema inventory sync scheduled")
 EOF
 
 # MySQL 由 API / Celery 按需连接；未就绪时首页显示未连接，无需阻塞启动

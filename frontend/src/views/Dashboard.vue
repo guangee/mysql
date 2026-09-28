@@ -1,7 +1,7 @@
 <template>
   <div v-loading="loading">
     <h2 class="page-title">系统概览</h2>
-    <div v-if="data.collected_at" class="page-hint">数据更新于 {{ formatDateTime(data.collected_at) }}，后台每分钟采样一次</div>
+    <div v-if="data.collected_at" class="page-hint">数据更新于 {{ formatDateTime(data.collected_at) }}，后台每 3 秒采样一次</div>
 
     <el-row :gutter="16" class="mb-4">
       <el-col :span="6" :xs="24" :sm="12" :md="6">
@@ -295,7 +295,7 @@ async function triggerFull() {
 
 onMounted(() => {
   load()
-  refreshTimer = setInterval(load, 60000)
+  refreshTimer = setInterval(load, 3000)
 })
 
 onUnmounted(() => {

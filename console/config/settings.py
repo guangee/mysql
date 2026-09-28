@@ -183,17 +183,27 @@ BACKUP_INDEX_SYNC_LOCK_TIMEOUT = 600
 
 HOST_METRICS_REDIS_KEY = "mysql_console:host_metrics"
 HOST_METRICS_LAST_COLLECT_KEY = "mysql_console:host_metrics:last_collect"
-HOST_METRICS_COLLECT_INTERVAL = int(os.environ.get("HOST_METRICS_COLLECT_INTERVAL", "60"))
+HOST_METRICS_COLLECT_INTERVAL = int(os.environ.get("HOST_METRICS_COLLECT_INTERVAL", "3"))
 HOST_METRICS_RETENTION_SECONDS = int(os.environ.get("HOST_METRICS_RETENTION_SECONDS", "86400"))
-HOST_METRICS_MAX_POINTS = int(os.environ.get("HOST_METRICS_MAX_POINTS", "1440"))
+# 默认按 3 秒采样保留约 24 小时：86400 / 3 = 28800
+HOST_METRICS_MAX_POINTS = int(os.environ.get("HOST_METRICS_MAX_POINTS", "28800"))
 HOST_METRICS_DEFAULT_HOURS = float(os.environ.get("HOST_METRICS_DEFAULT_HOURS", "6"))
 DASHBOARD_SNAPSHOT_REDIS_KEY = "mysql_console:dashboard_snapshot"
 DATABASE_LIST_SNAPSHOT_REDIS_KEY = "mysql_console:database_list_snapshot"
+DATABASE_DETAIL_SNAPSHOT_REDIS_KEY = "mysql_console:database_detail"
+DATABASE_METRICS_REDIS_KEY = "mysql_console:database_metrics"
+DATABASE_STATEMENT_REDIS_KEY = "mysql_console:database_statements"
+DATABASE_TABLE_TOP_N = int(os.environ.get("DATABASE_TABLE_TOP_N", "50"))
+SCHEMA_SYNC_INTERVAL = int(os.environ.get("SCHEMA_SYNC_INTERVAL", "300"))
 
 CELERY_BEAT_SCHEDULE = {
     "collect-dashboard-snapshot": {
         "task": "apps.core.tasks.collect_dashboard_snapshot_task",
         "schedule": timedelta(seconds=HOST_METRICS_COLLECT_INTERVAL),
+    },
+    "sync-schema-inventory": {
+        "task": "apps.core.tasks.sync_schema_inventory_task",
+        "schedule": timedelta(seconds=SCHEMA_SYNC_INTERVAL),
     },
 }
 

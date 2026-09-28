@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">业务数据库</h2>
-        <div v-if="collectedAt" class="page-hint">数据更新于 {{ formatDateTime(collectedAt) }}，后台每分钟采样一次</div>
+        <div v-if="collectedAt" class="page-hint">数据更新于 {{ formatDateTime(collectedAt) }}，后台每 3 秒采样一次</div>
       </div>
       <el-button type="primary" @click="openCreate">新建数据库</el-button>
     </div>
@@ -85,6 +85,26 @@
         <template #default="{ row }"><strong>{{ row.size_display }}</strong></template>
       </el-table-column>
 
+      <el-table-column label="近似内存" width="110" align="right">
+        <template #header>
+          <el-tooltip content="按数据体积占业务数据比例，近似分摊 InnoDB Buffer Pool" placement="top">
+            <span>近似内存</span>
+          </el-tooltip>
+        </template>
+        <template #default="{ row }">{{ row.memory_share_display || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="近似算力" width="110" align="right">
+        <template #header>
+          <el-tooltip content="按连接与活跃会话近似分摊后的份额，以及折算的容器 CPU%" placement="top">
+            <span>近似算力</span>
+          </el-tooltip>
+        </template>
+        <template #default="{ row }">
+          {{ formatPercent(row.compute_share_percent) }}
+          <div class="sub-metric">CPU {{ formatPercent(row.cpu_share_percent) }}</div>
+        </template>
+      </el-table-column>
+
       <el-table-column label="连接数" width="80" align="right">
         <template #default="{ row }">
           <el-tag :type="row.connection_count > 0 ? 'warning' : 'info'" size="small">
@@ -155,7 +175,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { accountApi, databaseApi } from '@/api'
@@ -170,6 +190,7 @@ const items = ref([])
 const summary = ref(null)
 const collectedAt = ref('')
 const businessUsers = ref([])
+let refreshTimer = null
 const createForm = reactive({
   name: '',
   charset: 'utf8mb4',
@@ -193,6 +214,11 @@ function formatRows(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return String(n)
+}
+
+function formatPercent(value) {
+  if (value == null || Number.isNaN(Number(value))) return '-'
+  return `${Number(value).toFixed(1)}%`
 }
 
 async function load() {
@@ -253,7 +279,14 @@ async function submitCreate() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  refreshTimer = setInterval(load, 3000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 </script>
 
 <style scoped>
@@ -275,4 +308,5 @@ onMounted(load)
 .mr-1 { margin-right: 4px; }
 .ml-1 { margin-left: 4px; }
 .muted { color: #909399; }
+.sub-metric { font-size: 11px; color: #909399; line-height: 1.2; }
 </style>

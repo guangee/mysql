@@ -63,8 +63,14 @@ from apps.backups.inventory import (
 )
 from apps.core.mysql_tuning import apply_tuning, get_tuning_overview
 from apps.core.docker_client import apply_backup_crontab, tail_backup_log
-from apps.core.metrics import get_host_metrics_history, load_dashboard_snapshot, load_database_list_snapshot
-from apps.core.tasks import collect_dashboard_snapshot_task
+from apps.core.metrics import (
+    get_database_metrics_history,
+    get_host_metrics_history,
+    load_dashboard_snapshot,
+    load_database_detail_snapshot,
+    load_database_list_snapshot,
+)
+from apps.core.tasks import collect_dashboard_snapshot_task, sync_schema_inventory_task
 from apps.core.models import AuditLog
 from apps.core.mysql_client import (
     MySQLClientError,
@@ -78,9 +84,12 @@ from apps.core.mysql_explorer import (
     build_table_select_sql,
     execute_readonly_query,
     export_query_to_excel_response,
-    get_database_overview,
     get_table_structure,
-    list_database_tables,
+)
+from apps.databases.services import (
+    get_inventory_database_detail,
+    get_inventory_table_structure,
+    list_schema_changes,
 )
 from apps.storages.models import StorageBackend
 from apps.storages.services import (
@@ -250,6 +259,7 @@ class DatabaseListView(APIView):
             ip_address=get_client_ip(request),
         )
         collect_dashboard_snapshot_task.delay()
+        sync_schema_inventory_task.delay()
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -257,31 +267,87 @@ class DatabaseDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, name):
-        try:
-            overview = get_database_overview(name)
-            tables = list_database_tables(name)
-            for t in tables:
-                t["size_display"] = _format_size(t["size_bytes"])
-                t["data_size_display"] = _format_size(t["data_bytes"])
-                t["index_size_display"] = _format_size(t["index_bytes"])
-            overview["size_display"] = _format_size(overview["size_bytes"])
-            return Response({"database": overview, "tables": tables})
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except MySQLClientError as exc:
-            return _mysql_error_response(exc, f"/api/databases/{name}/")
+        refresh = request.query_params.get("refresh") in {"1", "true", "yes"}
+        if refresh:
+            collect_dashboard_snapshot_task.delay()
+            sync_schema_inventory_task.delay()
+
+        snapshot = load_database_detail_snapshot(name)
+        if snapshot:
+            return Response(snapshot)
+
+        inventory = get_inventory_database_detail(name)
+        if inventory:
+            collect_dashboard_snapshot_task.delay()
+            return Response(inventory)
+
+        collect_dashboard_snapshot_task.delay()
+        return Response(
+            {
+                "database": None,
+                "tables": [],
+                "table_total": 0,
+                "collected_at": None,
+                "detail": "资源快照尚未就绪，已触发后台采集",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class DatabaseTableStructureView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, name, table):
+        refresh = request.query_params.get("refresh") in {"1", "true", "yes"}
+        if not refresh:
+            inventory = get_inventory_table_structure(name, table)
+            if inventory and inventory.get("columns"):
+                return Response(inventory)
         try:
-            return Response(get_table_structure(name, table))
+            data = get_table_structure(name, table)
+            inventory = get_inventory_table_structure(name, table)
+            if inventory:
+                data["recent_changes"] = inventory.get("recent_changes") or []
+                data["structure_hash"] = inventory.get("structure_hash") or ""
+            else:
+                data["recent_changes"] = []
+            data["from_inventory"] = False
+            return Response(data)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except MySQLClientError as exc:
             return _mysql_error_response(exc, f"/api/databases/{name}/tables/{table}/")
+
+
+class DatabaseSchemaChangesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, name):
+        table = request.query_params.get("table") or None
+        try:
+            limit = int(request.query_params.get("limit", 50))
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 200))
+        return Response(
+            {
+                "items": list_schema_changes(name, table=table, limit=limit),
+                "database": name,
+                "table": table,
+            }
+        )
+
+
+class DatabaseMetricsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, name):
+        hours = request.query_params.get("hours")
+        try:
+            hours_val = float(hours) if hours is not None else None
+        except (TypeError, ValueError):
+            hours_val = None
+        return Response(get_database_metrics_history(name, hours=hours_val))
 
 
 class DatabaseQueryView(APIView):

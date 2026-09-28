@@ -12,9 +12,16 @@ export const dashboardApi = {
 export const databaseApi = {
   list: () => http.get('/databases/'),
   create: (data) => http.post('/databases/', data),
-  detail: (name) => http.get(`/databases/${encodeURIComponent(name)}/`),
-  tableStructure: (name, table) =>
-    http.get(`/databases/${encodeURIComponent(name)}/tables/${encodeURIComponent(table)}/`),
+  detail: (name, refresh = false) =>
+    http.get(`/databases/${encodeURIComponent(name)}/`, { params: refresh ? { refresh: 1 } : {} }),
+  tableStructure: (name, table, refresh = false) =>
+    http.get(`/databases/${encodeURIComponent(name)}/tables/${encodeURIComponent(table)}/`, {
+      params: refresh ? { refresh: 1 } : {},
+    }),
+  schemaChanges: (name, params = {}) =>
+    http.get(`/databases/${encodeURIComponent(name)}/schema-changes/`, { params }),
+  metrics: (name, hours) =>
+    http.get(`/databases/${encodeURIComponent(name)}/metrics/`, { params: hours ? { hours } : {} }),
   query: (name, data) => http.post(`/databases/${encodeURIComponent(name)}/query/`, data),
   export: (name, data) =>
     http.post(`/databases/${encodeURIComponent(name)}/export/`, data, {
