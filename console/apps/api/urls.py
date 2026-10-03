@@ -58,6 +58,7 @@ urlpatterns = [
     path("databases/<str:name>/", DatabaseDetailView.as_view(), name="api-database-detail"),
     path("mysql/settings/", MySQLSettingsView.as_view(), name="api-mysql-settings"),
     path("mysql/service/", MySQLServiceView.as_view(), name="api-mysql-service"),
+    path("dts/", include("apps.dts.urls")),
     path("accounts/business/", BusinessAccountListView.as_view(), name="api-business-accounts"),
     path("accounts/system/", SystemAccountListView.as_view(), name="api-system-accounts"),
     path(

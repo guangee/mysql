@@ -1,12 +1,12 @@
 # MySQL 8.0 备份恢复方案
 
-基于 Docker Compose 的 MySQL 8.0 数据库备份恢复方案，使用 Percona-XtraBackup 进行全量和增量备份，支持 S3 兼容对象存储（如 MinIO），并提供时间点恢复（PITR）功能。
+基于 Docker Compose 的 MySQL 8.0 数据库备份恢复方案，使用 Percona-XtraBackup 进行全量和增量备份，支持将备份上传到外部 S3 兼容对象存储，并提供时间点恢复（PITR）功能。
 
 ## 功能特性
 
 - ✅ **MySQL 8.0.35** 数据库
 - ✅ **Percona-XtraBackup 8.0** 全量和增量备份
-- ✅ **S3 兼容对象存储**支持（MinIO、AWS S3 等）
+- ✅ **S3 兼容对象存储客户端**（在控制台配置外部桶，如 AWS S3 / OSS / COS）
 - ✅ **自动定时备份**（Cron 调度）
 - ✅ **手动备份**（全量/增量）
 - ✅ **普通恢复**（恢复到备份时间点）
@@ -19,7 +19,15 @@
 
 ### 1. 配置环境变量
 
-创建 `.env` 文件或直接在 `docker-compose.yml` 中配置环境变量：
+复制 `.env.example` 为 `.env` 后按环境修改：
+
+```bash
+cp .env.example .env
+```
+
+对象存储请在控制台「对象存储」页面配置外部 S3 兼容 endpoint（本项目不内置 S3 服务端）。可选地也可在 `.env` 中填写 `S3_*` 作为首次导入回退。
+
+MySQL / 备份调度示例：
 
 ```yaml
 services:
@@ -28,16 +36,6 @@ services:
       # MySQL 配置
       MYSQL_ROOT_PASSWORD: your_root_password
       MYSQL_DATABASE: your_database
-      
-      # S3 兼容对象存储配置（MinIO 示例）
-      S3_BACKUP_ENABLED: true
-      S3_ENDPOINT: minio.example.com:9000
-      S3_ACCESS_KEY: your_access_key
-      S3_SECRET_KEY: your_secret_key
-      S3_BUCKET: mysql-backups
-      S3_REGION: us-east-1
-      S3_USE_SSL: false
-      S3_FORCE_PATH_STYLE: true
       
       # 备份配置
       FULL_BACKUP_SCHEDULE: "0 2 * * 0"        # 每周日凌晨 2 点
@@ -271,48 +269,28 @@ docker-compose exec mysql mysql -u root -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT CO
 
 如果未设置，将依次使用 `MYSQL_USER` 或 `root` 用户。
 
-### S3 兼容对象存储配置（MinIO）
+### S3 兼容对象存储（外部桶）
+
+本项目只内置 S3 **客户端**（`mc`），不启动任何对象存储服务端。请在控制台「对象存储」页面填写外部桶信息并测试连通性；备份任务会按启用的存储同步上传。
+
+也可在 `.env` 中配置以下变量作为空库时的首次导入回退（默认关闭）：
 
 | 参数 | 说明 | 必填 | 示例 |
 |------|------|------|------|
-| `S3_BACKUP_ENABLED` | 是否启用 S3 备份 | 是 | `true` / `false` |
-| `S3_ENDPOINT` | S3 服务端点地址 | 是 | `minio.example.com:9000` |
-| `S3_ACCESS_KEY` | 访问密钥 ID | 是 | `your_access_key` |
-| `S3_SECRET_KEY` | 访问密钥 | 是 | `your_secret_key` |
-| `S3_BUCKET` | 存储桶名称 | 是 | `mysql-backups` |
-| `S3_REGION` | 区域（MinIO 通常使用 `us-east-1`） | 是 | `us-east-1` |
-| `S3_USE_SSL` | 是否使用 SSL/TLS | 否 | `true` / `false`（MinIO 通常为 `false`） |
-| `S3_FORCE_PATH_STYLE` | 是否使用路径样式访问 | 否 | `true`（MinIO 需要设置为 `true`） |
-| `S3_ALIAS` | S3 别名（用于 MinIO 客户端） | 否 | `s3`（默认值） |
+| `S3_BACKUP_ENABLED` | 是否从环境变量启用/导入 S3 | 否 | `false`（默认） |
+| `S3_ENDPOINT` | S3 服务端点地址 | 启用时 | `s3.amazonaws.com` / `oss-cn-hangzhou.aliyuncs.com` |
+| `S3_ACCESS_KEY` | 访问密钥 ID | 启用时 | `your_access_key` |
+| `S3_SECRET_KEY` | 访问密钥 | 启用时 | `your_secret_key` |
+| `S3_BUCKET` | 存储桶名称 | 启用时 | `mysql-backups` |
+| `S3_REGION` | 区域 | 否 | `us-east-1` |
+| `S3_USE_SSL` | 是否使用 SSL/TLS | 否 | `true` / `false` |
+| `S3_FORCE_PATH_STYLE` | 是否使用路径样式访问 | 否 | 多数云厂商 `false`，部分兼容实现需 `true` |
+| `S3_ALIAS` | `mc` 客户端别名 | 否 | `s3`（默认值） |
 
-#### MinIO 配置示例
-
-```yaml
-environment:
-  S3_BACKUP_ENABLED: true
-  S3_ENDPOINT: 192.168.1.100:9000
-  S3_ACCESS_KEY: minioadmin
-  S3_SECRET_KEY: minioadmin
-  S3_BUCKET: mysql-backups
-  S3_REGION: us-east-1
-  S3_USE_SSL: false
-  S3_FORCE_PATH_STYLE: true
-  S3_ALIAS: s3
-```
-
-#### S3 备份开关
-
-如果只需要本地备份，可以关闭 S3 备份：
-
-```yaml
-environment:
-  S3_BACKUP_ENABLED: false
-```
-
-当 `S3_BACKUP_ENABLED=false` 时：
+未配置对象存储时：
 - ✅ 备份仍然会正常执行（全量和增量备份）
 - ✅ 备份文件保存在本地目录 `./data/backups/`
-- ❌ 不会上传到 S3 对象存储
+- ❌ 不会上传到对象存储
 - ❌ 增量备份只能使用本地的基础备份
 
 ### 备份调度配置
@@ -322,9 +300,9 @@ environment:
 | `FULL_BACKUP_SCHEDULE` | 全量备份 Cron 计划 | `分钟 小时 日 月 星期` | `0 2 * * 0`（每周日凌晨 2 点） |
 | `INCREMENTAL_BACKUP_SCHEDULE` | 增量备份 Cron 计划 | `分钟 小时 日 月 星期` | `0 3 * * *`（每天凌晨 3 点） |
 | `BACKUP_RETENTION_DAYS` | 备份保留天数 | 数字 | `30` |
-| `LOCAL_BACKUP_RETENTION_HOURS` | 本地备份保留时间（小时） | 数字 | `0`（上传到 S3 后立即删除） |
+| `LOCAL_BACKUP_RETENTION_HOURS` | 本地备份保留时间（小时） | 数字 | `0`（上传到对象存储后立即删除） |
 
-**注意**：`LOCAL_BACKUP_RETENTION_HOURS` 仅在 `S3_BACKUP_ENABLED=true` 时生效。当 `S3_BACKUP_ENABLED=false` 时，本地备份将永久保留。
+**注意**：`LOCAL_BACKUP_RETENTION_HOURS` 仅在已配置并启用对象存储上传时生效；未启用时本地备份将按保留策略保留。
 
 ### 钉钉机器人通知配置
 
@@ -403,7 +381,6 @@ mysql/
 └── data/                            # 运行时数据（已 gitignore）
     ├── mysql_data/                  # MySQL 数据目录
     ├── mysql_config/                # MySQL 配置
-    ├── minio_data/                  # 对象存储数据
     └── backups/                     # 备份文件
         ├── full/
         ├── incremental/
@@ -426,7 +403,7 @@ mysql/
 └── backup.log                      # 备份日志
 ```
 
-### S3 存储结构（当 S3_BACKUP_ENABLED=true 时）
+### 对象存储结构（在控制台配置并启用后）
 
 ```
 s3://mysql-backups/

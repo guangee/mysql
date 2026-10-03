@@ -1,27 +1,4 @@
-version: '3.8'
-
 services:
-  # 官方 minio 镜像已离开 Docker Hub。这里用 SeaweedFS 提供 S3 兼容接口，
-  # 镜像经 hub.coding-space.cn 拉取。备份脚本仍通过 mc + S3 API 访问。
-  minio:
-    image: hub.coding-space.cn/chrislusf/seaweedfs:latest
-    container_name: minio
-    restart: unless-stopped
-    command:
-      - server
-      - -dir=/data
-      - -ip=0.0.0.0
-      - -s3
-      - -s3.port=9000
-      - -s3.config=/etc/seaweedfs/s3.json
-    volumes:
-      - ./data/minio_data:/data
-      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
-    ports:
-      - "9000:9000"
-    networks:
-      - backup-network
-
   mysql:
     image: ${MYSQL_IMAGE}
     container_name: ${MYSQL_CONTAINER_NAME}
@@ -29,8 +6,6 @@ services:
       context: ./
       dockerfile: docker/Dockerfile
     restart: unless-stopped
-    depends_on:
-      - minio
     env_file:
       - .env
     volumes:
@@ -47,6 +22,8 @@ services:
       - --default-authentication-plugin=mysql_native_password
       - --log-bin=mysql-bin
       - --binlog-format=ROW
+      - --binlog-row-image=FULL
+      - --binlog-row-metadata=FULL
       - --server-id=1
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_general_ci

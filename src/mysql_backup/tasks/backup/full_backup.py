@@ -16,6 +16,7 @@ from mysql_backup.core.backup_storage import (
     cleanup_local_orphan_backups_on_s3,
     pack_backup_directory,
     setup_s3 as setup_s3_storage,
+    stream_command,
     upload_and_verify_all,
     upload_metadata_to_all,
 )
@@ -34,7 +35,7 @@ else:
     MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
 
 BACKUP_BASE_DIR = Path(os.environ.get("BACKUP_BASE_DIR", "/backups"))
-S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "true").lower() == "true"
+S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "false").lower() == "true"
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
@@ -56,7 +57,7 @@ def log(message: str):
     """记录日志"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_message = f"[{timestamp}] {message}"
-    print(log_message)
+    print(log_message, flush=True)
     
     # 同时写入日志文件
     try:
@@ -94,15 +95,9 @@ def perform_full_backup():
     cmd.extend([f"--user={MYSQL_USER}", f"--password={MYSQL_PASSWORD}"])
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        if result.stdout:
-            for line in result.stdout.split('\n'):
-                if line.strip():
-                    log(f"xtrabackup: {line}")
-    except subprocess.CalledProcessError as e:
+        stream_command(cmd, log, prefix="xtrabackup: ")
+    except subprocess.CalledProcessError:
         log("错误: 全量备份失败")
-        if e.stderr:
-            log(f"错误详情: {e.stderr}")
         return 1
     
     log(f"全量备份完成: {FULL_BACKUP_DIR}")
@@ -110,15 +105,17 @@ def perform_full_backup():
     # 准备备份（应用日志）
     log("准备备份（应用日志）...")
     try:
-        subprocess.run(
+        log("解压备份文件...")
+        stream_command(
             ["xtrabackup", "--decompress", f"--target-dir={FULL_BACKUP_DIR}"],
-            check=True,
-            capture_output=True
+            log,
+            prefix="xtrabackup: ",
         )
-        subprocess.run(
+        log("应用 redo 日志...")
+        stream_command(
             ["xtrabackup", "--prepare", f"--target-dir={FULL_BACKUP_DIR}"],
-            check=True,
-            capture_output=True
+            log,
+            prefix="xtrabackup: ",
         )
     except subprocess.CalledProcessError as e:
         log(f"错误: 准备备份失败: {e}")

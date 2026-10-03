@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "apps.databases",
     "apps.backups",
     "apps.storages",
+    "apps.dts",
     "apps.api",
 ]
 
@@ -170,6 +171,9 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://127.0.0.1:6379/
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://127.0.0.1:6379/0")
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
+CELERY_TASK_ROUTES = {
+    "apps.dts.tasks.*": {"queue": "dts"},
+}
 
 # Backup lock
 BACKUP_LOCK_KEY = "mysql_console:backup_lock"
@@ -204,6 +208,10 @@ CELERY_BEAT_SCHEDULE = {
     "sync-schema-inventory": {
         "task": "apps.core.tasks.sync_schema_inventory_task",
         "schedule": timedelta(seconds=SCHEMA_SYNC_INTERVAL),
+    },
+    "advance-dts-incremental": {
+        "task": "apps.dts.tasks.advance_dts_incremental",
+        "schedule": timedelta(seconds=3),
     },
 }
 

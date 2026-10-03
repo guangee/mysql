@@ -121,10 +121,64 @@ def run_backup_command(backup_type: str) -> subprocess.CompletedProcess:
     if backup_type not in {"full", "incremental"}:
         raise ValueError(f"未知备份类型: {backup_type}")
     return exec_in_mysql_container(
-        ["python3", "-m", "mysql_backup", "backup", backup_type],
+        ["python3", "-u", "-m", "mysql_backup", "backup", backup_type],
         timeout=3600,
         check=False,
     )
+
+
+def run_backup_command_streaming(backup_type: str, on_line, timeout: int = 3600) -> subprocess.CompletedProcess:
+    """边执行备份边回调每一行输出，供任务页实时展示进度。"""
+    import select
+    import time
+
+    if backup_type not in {"full", "incremental"}:
+        raise ValueError(f"未知备份类型: {backup_type}")
+    container = settings.DOCKER_MYSQL_CONTAINER
+    cmd = [
+        "docker", "exec",
+        "-e", "PYTHONUNBUFFERED=1",
+        container,
+        "python3", "-u", "-m", "mysql_backup", "backup", backup_type,
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+    except FileNotFoundError as exc:
+        raise DockerClientError("docker 命令不可用，请挂载 /var/run/docker.sock") from exc
+
+    lines: list[str] = []
+    deadline = time.monotonic() + timeout
+    assert proc.stdout is not None
+    try:
+        while True:
+            if time.monotonic() > deadline:
+                proc.kill()
+                raise DockerClientError(f"命令执行超时 ({timeout}s)")
+            ready, _, _ = select.select([proc.stdout], [], [], 1)
+            if not ready:
+                if proc.poll() is not None:
+                    break
+                continue
+            raw = proc.stdout.readline()
+            if not raw:
+                break
+            line = raw.rstrip("\n")
+            lines.append(line)
+            if on_line:
+                on_line(line)
+        code = proc.wait(timeout=30)
+    except DockerClientError:
+        raise
+    except Exception as exc:
+        proc.kill()
+        raise DockerClientError(str(exc)) from exc
+    return subprocess.CompletedProcess(cmd, code, stdout="\n".join(lines), stderr="")
 
 
 def run_cleanup_command(scope: str) -> subprocess.CompletedProcess:

@@ -22,6 +22,10 @@
           <el-icon><User /></el-icon>
           <span>账号与凭证</span>
         </el-menu-item>
+        <el-menu-item index="/dts">
+          <el-icon><Connection /></el-icon>
+          <span>数据同步</span>
+        </el-menu-item>
         <el-sub-menu index="backups">
           <template #title>
             <el-icon><Upload /></el-icon>
@@ -65,6 +69,7 @@ const auth = useAuthStore()
 const activeMenu = computed(() => {
   if (route.path.startsWith('/databases')) return '/databases'
   if (route.path.startsWith('/backups')) return route.path
+  if (route.path.startsWith('/dts')) return '/dts'
   return route.path
 })
 

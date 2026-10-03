@@ -154,6 +154,7 @@ class BackupJobSerializer(serializers.ModelSerializer):
     trigger_display = serializers.CharField(source="get_trigger_display", read_only=True)
     duration_seconds = serializers.IntegerField(read_only=True, allow_null=True)
     created_by_name = serializers.CharField(source="created_by.username", read_only=True, default=None)
+    progress = serializers.SerializerMethodField()
 
     class Meta:
         model = BackupJob
@@ -166,7 +167,7 @@ class BackupJobSerializer(serializers.ModelSerializer):
             "trigger",
             "trigger_display",
             "storage_results",
-            "output_log",
+            "progress",
             "error_message",
             "started_at",
             "finished_at",
@@ -174,6 +175,11 @@ class BackupJobSerializer(serializers.ModelSerializer):
             "created_by_name",
             "created_at",
         ]
+
+    def get_progress(self, obj):
+        from apps.backups.progress import summarize_backup_log
+
+        return summarize_backup_log(obj.output_log, obj.status, obj.storage_results or {})
 
 
 class BackupArtifactSerializer(serializers.ModelSerializer):

@@ -37,6 +37,17 @@ export const mysqlApi = {
   controlService: (data) => http.post('/mysql/service/', data, { timeout: 240000 }),
 }
 
+export const dtsApi = {
+  databases: () => http.get('/dts/databases/'),
+  tasks: () => http.get('/dts/tasks/'),
+  createTask: (data) => http.post('/dts/tasks/', data),
+  updateTask: (id, data) => http.patch(`/dts/tasks/${id}/`, data),
+  removeTask: (id) => http.delete(`/dts/tasks/${id}/`),
+  testConnection: (data) => http.post('/dts/test-connection/', data),
+  detail: (id) => http.get(`/dts/tasks/${id}/`),
+  action: (id, action, data = {}) => http.post(`/dts/tasks/${id}/${action}/`, data),
+}
+
 export const accountApi = {
   businessList: () => http.get('/accounts/business/'),
   createBusiness: (data) => http.post('/accounts/business/', data),

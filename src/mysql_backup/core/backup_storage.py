@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
-S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "true").lower() == "true"
+S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "false").lower() == "true"
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")
@@ -277,6 +277,25 @@ def verify_s3_upload(local_path: Path, s3_path: str, log: Callable[[str], None])
 
     log("错误: 无法校验 S3 对象内容（缺少 hash 命令且 ETag 不可用）")
     return False
+
+
+def stream_command(cmd: list[str], log: Callable[[str], None], prefix: str = "") -> None:
+    """逐行输出子进程日志，便于控制台实时看到备份进度。"""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.rstrip()
+        if line:
+            log(f"{prefix}{line}" if prefix else line)
+    code = proc.wait()
+    if code != 0:
+        raise subprocess.CalledProcessError(code, cmd)
 
 
 def upload_and_verify(local_path: Path, s3_path: str, log: Callable[[str], None]) -> bool:

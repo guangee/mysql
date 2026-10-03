@@ -27,38 +27,65 @@
       </div>
     </el-card>
 
-    <el-alert v-if="running" type="info" title="有任务正在运行，页面将自动刷新" show-icon class="mb-3" />
-    <el-table :data="items" stripe>
-      <el-table-column prop="id" label="ID" width="80">
+    <el-alert v-if="running" type="info" title="有任务正在运行，进度会自动更新" show-icon class="mb-3" />
+    <el-table :data="items" stripe row-key="id">
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div class="job-detail">
+            <div v-if="row.progress?.filename">文件：<code>{{ row.progress.filename }}</code></div>
+            <div v-if="row.progress?.databases">数据库：{{ row.progress.databases }}</div>
+            <div v-if="row.progress?.detail" class="detail-line">当前：{{ row.progress.detail }}</div>
+            <div v-if="storageEntries(row).length" class="storage-lines">
+              <div v-for="item in storageEntries(row)" :key="item.name">
+                {{ item.name }}：{{ item.ok ? '已上传并校验' : '上传失败' }}
+                <span v-if="item.message">（{{ item.message }}）</span>
+              </div>
+            </div>
+            <div v-if="row.error_message" class="error-line">{{ row.error_message }}</div>
+            <pre v-if="row.progress?.recent_lines?.length" class="recent-log">{{ row.progress.recent_lines.join('\n') }}</pre>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column prop="id" label="ID" width="70">
         <template #default="{ row }">#{{ row.id }}</template>
       </el-table-column>
-      <el-table-column prop="backup_type_display" label="类型" width="100" />
-      <el-table-column prop="status_display" label="状态" width="100">
+      <el-table-column prop="backup_type_display" label="类型" width="80" />
+      <el-table-column prop="status_display" label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusType(row.status)" size="small">{{ row.status_display }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="trigger_display" label="触发" width="80" />
-      <el-table-column label="存储结果" min-width="160">
+      <el-table-column label="进度" min-width="220">
         <template #default="{ row }">
-          <el-tag
-            v-for="(result, name) in row.storage_results"
-            :key="name"
-            size="small"
-            :type="result.ok ? 'success' : 'danger'"
-            class="mr-1"
-          >{{ name }}</el-tag>
-          <span v-if="!Object.keys(row.storage_results || {}).length">-</span>
+          <div class="progress-label">{{ row.progress?.stage_label || '-' }}</div>
+          <el-progress
+            :percentage="Math.min(Number(row.progress?.percent) || 0, 100)"
+            :stroke-width="8"
+            :status="progressStatus(row)"
+          />
         </template>
       </el-table-column>
+      <el-table-column label="文件大小" width="110">
+        <template #default="{ row }">{{ row.progress?.size_display || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="云存储" min-width="180">
+        <template #default="{ row }">
+          <el-tag size="small" :type="uploadTagType(row.progress?.upload_status)">
+            {{ row.progress?.upload_label || '-' }}
+          </el-tag>
+          <el-tag
+            v-for="item in storageEntries(row)"
+            :key="item.name"
+            size="small"
+            :type="item.ok ? 'success' : 'danger'"
+            class="ml-1"
+          >{{ item.name }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="trigger_display" label="触发" width="70" />
       <el-table-column label="开始" width="170" class-name="time-col">
         <template #default="{ row }">
           <span class="time-cell">{{ formatDateTime(row.started_at) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="结束" width="170" class-name="time-col">
-        <template #default="{ row }">
-          <span class="time-cell">{{ formatDateTime(row.finished_at) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="耗时" width="80">
@@ -87,12 +114,45 @@ function statusType(status) {
   return { success: 'success', failed: 'danger', partial: 'warning', running: 'primary' }[status] || 'info'
 }
 
-async function load() {
-  loading.value = true
+function progressStatus(row) {
+  if (row.status === 'success') return 'success'
+  if (row.status === 'failed') return 'exception'
+  return undefined
+}
+
+function uploadTagType(status) {
+  return {
+    uploaded: 'success',
+    partial: 'warning',
+    failed: 'danger',
+    uploading: 'primary',
+    skipped: 'info',
+    pending: 'info',
+  }[status] || 'info'
+}
+
+function storageEntries(row) {
+  const storages = row.progress?.storages || row.storage_results || {}
+  return Object.entries(storages).map(([name, result]) => ({
+    name,
+    ok: !!result?.ok,
+    message: result?.message || '',
+  }))
+}
+
+function scheduleRefresh() {
+  if (timer) clearInterval(timer)
+  timer = setInterval(() => load(true), running.value ? 2000 : 15000)
+}
+
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const { data } = await backupApi.jobs()
     items.value = data.items
+    const wasRunning = running.value
     running.value = data.running
+    if (wasRunning !== data.running || !timer) scheduleRefresh()
   } finally {
     loading.value = false
   }
@@ -124,7 +184,7 @@ async function trigger(type) {
 
 onMounted(() => {
   loadAll()
-  timer = setInterval(load, 15000)
+  scheduleRefresh()
 })
 onUnmounted(() => clearInterval(timer))
 </script>
@@ -141,4 +201,21 @@ onUnmounted(() => clearInterval(timer))
 .schedule-hint { color: #909399; font-size: 12px; }
 .time-cell { white-space: nowrap; }
 :deep(.time-col .cell) { white-space: nowrap; }
+:deep(.el-progress-bar__inner) { transition: none; }
+.progress-label { margin-bottom: 4px; font-size: 12px; color: #606266; }
+.ml-1 { margin-left: 4px; }
+.job-detail { padding: 4px 12px 8px 48px; color: #606266; font-size: 13px; line-height: 1.7; }
+.detail-line { color: #909399; }
+.error-line { color: #f56c6c; white-space: pre-wrap; }
+.recent-log {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
 </style>

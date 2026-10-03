@@ -192,6 +192,9 @@ def import_from_env() -> StorageBackend | None:
     if StorageBackend.objects.exists():
         return None
 
+    if os.environ.get("S3_BACKUP_ENABLED", "false").lower() != "true":
+        return None
+
     endpoint = os.environ.get("S3_ENDPOINT", "")
     access_key = os.environ.get("S3_ACCESS_KEY", "")
     secret_key = os.environ.get("S3_SECRET_KEY", "")

@@ -1,5 +1,5 @@
 <template>
-  <div v-loading="loading">
+  <div v-loading="pageLoading">
     <h2 class="page-title">系统概览</h2>
     <div v-if="data.collected_at" class="page-hint">数据更新于 {{ formatDateTime(data.collected_at) }}，后台每 3 秒采样一次</div>
 
@@ -99,7 +99,7 @@
           <el-card shadow="never" class="metric-card chart-card">
             <div class="chart-toolbar">
               <span class="metric-title">系统负载趋势</span>
-              <el-radio-group v-model="historyHours" size="small" @change="load">
+              <el-radio-group v-model="historyHours" size="small" @change="load()">
                 <el-radio-button :value="1">近 1 小时</el-radio-button>
                 <el-radio-button :value="6">近 6 小时</el-radio-button>
                 <el-radio-button :value="24">近 24 小时</el-radio-button>
@@ -173,12 +173,12 @@
     <el-row class="mb-4">
       <el-col>
         <el-button type="primary" size="small" :loading="triggering" @click="triggerFull">立即全量备份</el-button>
-        <el-button size="small" @click="load">刷新统计</el-button>
+        <el-button size="small" :loading="manualLoading" @click="load()">刷新统计</el-button>
       </el-col>
     </el-row>
 
     <h3 class="section-title">最近备份任务</h3>
-    <el-table :data="data.latest_jobs || []" stripe>
+    <el-table :data="data.latest_jobs || []" stripe row-key="id">
       <el-table-column prop="id" label="ID" width="80">
         <template #default="{ row }">#{{ row.id }}</template>
       </el-table-column>
@@ -202,22 +202,25 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import { ElMessage } from 'element-plus'
 import { dashboardApi, backupApi } from '@/api'
 import { formatDateTime } from '@/utils/datetime'
 import MetricLineChart from '@/components/MetricLineChart.vue'
 
-const loading = ref(false)
+const pageLoading = ref(false)
+const manualLoading = ref(false)
 const triggering = ref(false)
 const historyHours = ref(6)
+const loadSeries = shallowRef([])
+const memorySeries = shallowRef([])
 let refreshTimer = null
+let refreshing = false
 
 const data = reactive({
   mysql_status: {},
   mysql_stats: null,
   host_stats: null,
-  host_metrics_history: { points: [] },
   collected_at: null,
   mysql_error: '',
   db_count: 0,
@@ -239,26 +242,44 @@ const diskStatus = computed(() => {
   return undefined
 })
 
-function toChartPoints(key) {
-  return (data.host_metrics_history?.points || [])
-    .filter((p) => p[key] != null)
-    .map((p) => [p.ts * 1000, p[key]])
+function downsample(points, maxPoints = 480) {
+  if (!points || points.length <= maxPoints) return points || []
+  const last = points.length - 1
+  const step = last / (maxPoints - 1)
+  const sampled = []
+  let prev = -1
+  for (let i = 0; i < maxPoints; i += 1) {
+    const idx = Math.min(last, Math.round(i * step))
+    if (idx !== prev) sampled.push(points[idx])
+    prev = idx
+  }
+  if (sampled[sampled.length - 1] !== points[last]) sampled.push(points[last])
+  return sampled
 }
 
-const loadSeries = computed(() => [
-  { name: '负载 (1m)', data: toChartPoints('load_1m'), yAxisIndex: 0, area: true },
-  { name: 'CPU %', data: toChartPoints('cpu_percent'), yAxisIndex: 1 },
-])
-
-const memorySeries = computed(() => {
-  const series = [
-    { name: '容器内存 %', data: toChartPoints('memory_usage_percent'), area: true },
-  ]
-  if ((data.host_metrics_history?.points || []).some((p) => p.host_memory_usage_percent != null)) {
-    series.push({ name: '宿主机内存 %', data: toChartPoints('host_memory_usage_percent') })
+function toPairs(points, key) {
+  const out = []
+  for (let i = 0; i < points.length; i += 1) {
+    const value = points[i][key]
+    if (value != null) out.push([points[i].ts * 1000, value])
   }
-  return series
-})
+  return out
+}
+
+function rebuildSeries(points) {
+  const sampled = downsample(points)
+  loadSeries.value = [
+    { name: '负载 (1m)', data: toPairs(sampled, 'load_1m'), yAxisIndex: 0, area: true },
+    { name: 'CPU %', data: toPairs(sampled, 'cpu_percent'), yAxisIndex: 1 },
+  ]
+  const memory = [
+    { name: '容器内存 %', data: toPairs(sampled, 'memory_usage_percent'), area: true },
+  ]
+  if (sampled.some((p) => p.host_memory_usage_percent != null)) {
+    memory.push({ name: '宿主机内存 %', data: toPairs(sampled, 'host_memory_usage_percent') })
+  }
+  memorySeries.value = memory
+}
 
 function formatSize(bytes) {
   if (bytes == null || bytes === 0) return '0 B'
@@ -272,13 +293,25 @@ function statusType(status) {
   return { success: 'success', failed: 'danger', partial: 'warning', running: 'primary' }[status] || 'info'
 }
 
-async function load() {
-  loading.value = true
+async function load({ silent = false } = {}) {
+  if (silent) {
+    if (refreshing) return
+    refreshing = true
+  } else if (!data.collected_at) {
+    pageLoading.value = true
+  } else {
+    manualLoading.value = true
+  }
   try {
     const { data: res } = await dashboardApi.get(historyHours.value)
-    Object.assign(data, res)
+    rebuildSeries(res.host_metrics_history?.points || [])
+    const rest = { ...res }
+    delete rest.host_metrics_history
+    Object.assign(data, rest)
   } finally {
-    loading.value = false
+    pageLoading.value = false
+    manualLoading.value = false
+    refreshing = false
   }
 }
 
@@ -295,7 +328,7 @@ async function triggerFull() {
 
 onMounted(() => {
   load()
-  refreshTimer = setInterval(load, 3000)
+  refreshTimer = setInterval(() => load({ silent: true }), 3000)
 })
 
 onUnmounted(() => {
@@ -338,5 +371,6 @@ onUnmounted(() => {
 .current-stats strong { color: #303133; }
 .disk-detail { margin-top: 16px; }
 .page-hint { margin: -8px 0 16px; font-size: 13px; color: #909399; }
+:deep(.el-progress-bar__inner) { transition: none; }
 :deep(.time-col .cell) { white-space: nowrap; }
 </style>

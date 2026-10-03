@@ -24,7 +24,7 @@ from mysql_backup.core.backup_storage import (
 )
 
 # 配置变量
-S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "true").lower() == "true"
+S3_BACKUP_ENABLED = os.environ.get("S3_BACKUP_ENABLED", "false").lower() == "true"
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "")
 S3_ACCESS_KEY = os.environ.get("S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.environ.get("S3_SECRET_KEY", "")

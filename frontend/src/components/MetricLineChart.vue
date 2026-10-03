@@ -79,16 +79,24 @@ function buildOption() {
           }]
         : []),
     ],
-    series: props.series.map((s) => ({
-      name: s.name,
-      type: 'line',
-      smooth: true,
-      showSymbol: false,
-      yAxisIndex: s.yAxisIndex || 0,
-      data: s.data || [],
-      lineStyle: { width: 2 },
-      areaStyle: s.area ? { opacity: 0.08 } : undefined,
-    })),
+    animation: false,
+    animationDurationUpdate: 0,
+    series: props.series.map((s) => {
+      const length = s.data?.length || 0
+      return {
+        name: s.name,
+        type: 'line',
+        smooth: length > 0 && length <= 240,
+        showSymbol: false,
+        sampling: 'lttb',
+        large: length > 400,
+        largeThreshold: 400,
+        yAxisIndex: s.yAxisIndex || 0,
+        data: s.data || [],
+        lineStyle: { width: 2 },
+        areaStyle: s.area ? { opacity: 0.08 } : undefined,
+      }
+    }),
   }
 }
 
@@ -97,7 +105,7 @@ function renderChart() {
   if (!chart) {
     chart = echarts.init(chartRef.value)
   }
-  chart.setOption(buildOption(), true)
+  chart.setOption(buildOption(), { notMerge: true, lazyUpdate: true, silent: true })
 }
 
 function handleResize() {
@@ -107,7 +115,6 @@ function handleResize() {
 watch(
   () => props.series,
   () => renderChart(),
-  { deep: true }
 )
 
 onMounted(() => {

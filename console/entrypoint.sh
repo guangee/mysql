@@ -28,9 +28,19 @@ run_production() {
   celery -A config worker -B \
     --loglevel=info \
     --logfile=/app/logs/celery-worker.log \
+    -Q celery \
     --concurrency=1 &
   CELERY_PID=$!
   echo "Celery worker started (pid=${CELERY_PID})"
+
+  celery -A config worker \
+    --loglevel=info \
+    --logfile=/app/logs/celery-dts.log \
+    -Q dts \
+    --concurrency=1 \
+    -n dts@%h &
+  DTS_PID=$!
+  echo "DTS worker started (pid=${DTS_PID})"
 
   gunicorn -c /app/gunicorn.conf.py config.wsgi:application &
   GUNICORN_PID=$!
@@ -44,6 +54,7 @@ run_production() {
     kill -TERM "${NGINX_PID}" 2>/dev/null || true
     kill -TERM "${GUNICORN_PID}" 2>/dev/null || true
     kill -TERM "${CELERY_PID}" 2>/dev/null || true
+    kill -TERM "${DTS_PID}" 2>/dev/null || true
     stop_redis
   }
   trap term_handler TERM INT
@@ -52,6 +63,7 @@ run_production() {
   term_handler
   wait "${GUNICORN_PID}" 2>/dev/null || true
   wait "${CELERY_PID}" 2>/dev/null || true
+  wait "${DTS_PID}" 2>/dev/null || true
 }
 
 # 清理超过保留天数的日志文件
