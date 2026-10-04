@@ -1315,6 +1315,14 @@ def restore_to_point_in_time(target_datetime: str, full_backup_timestamp: Option
             log(f"错误详情: {traceback.format_exc()}")
     else:
         log("注意: 临时binlog目录不存在或无效，跳过binlog文件恢复")
+
+    # copy2 会保留 root 属主，mysqld(mysql) 读不了 binlog；恢复后再统一修一次权限
+    log("再次修复数据目录权限（含恢复后的 binlog）...")
+    try:
+        subprocess.run(["chown", "-R", "mysql:mysql", str(MYSQL_DATA_DIR)], check=False, capture_output=True)
+        subprocess.run(["chmod", "700", str(MYSQL_DATA_DIR)], check=False, capture_output=True)
+    except Exception as e:
+        log(f"警告: 无法修复权限，可能需要手动修复: {e}")
     
     log("备份恢复完成")
     

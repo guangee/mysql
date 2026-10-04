@@ -43,10 +43,12 @@ do_start() {
   extra=( ${MYSQLD_EXTRA_ARGS:-} )
   "$@" "${extra[@]}" &
   echo $! >"$PID_FILE"
-  for _ in $(seq 1 90); do
+  for _ in $(seq 1 240); do
     if mysqladmin ping -h127.0.0.1 -uroot -p"$ROOT_PASSWORD" --silent 2>/dev/null \
       || mysqladmin ping -h127.0.0.1 -uroot --silent 2>/dev/null \
-      || mysqladmin ping -h127.0.0.1 --silent 2>/dev/null; then
+      || mysqladmin ping -h127.0.0.1 --silent 2>/dev/null \
+      || mysqladmin ping --socket="$SOCK_FILE" -uroot -p"$ROOT_PASSWORD" --silent 2>/dev/null \
+      || mysqladmin ping --socket="$SOCK_FILE" -uroot --silent 2>/dev/null; then
       echo "mysqld started"
       return 0
     fi

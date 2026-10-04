@@ -57,7 +57,7 @@ docker compose exec mysql tail -f /backups/backup.log
 
 1. 停掉旧栈：`docker compose down`（**不要**加 `-v`，保留数据卷）
 2. 拉取/构建本仓库最新 `docker-compose.yml`（仅一个 `mysql` 服务，无 sock）
-3. 按 `.env.example` 补齐 `RUNTIME_MODE=allinone`、`CONSOLE_PORT` 等变量
+3. 按 `.env.example` 补齐密码与 `CONSOLE_PORT` 等变量（一体镜像内 MySQL/Redis 地址已内置，不必再配）
 4. `docker compose up -d --build`
 5. 用原路径挂载：`./data/mysql_data`、`./data/mysql_config`、`./data/backups`、`./data/console_data`、`./shared`、`./data/logs`
 6. 验证：`curl http://127.0.0.1:${CONSOLE_PORT}/api/healthz/` 返回 `"ok": true`，控制台可登录

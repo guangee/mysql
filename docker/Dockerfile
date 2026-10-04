@@ -149,6 +149,7 @@ RUN npm run build
 # ---------- 一体镜像：MySQL + Console + Frontend ----------
 FROM mysql-only AS allinone
 
+# 一体镜像内置本机连接与路径，用户侧 .env 只需密码/端口/调度等业务变量
 ENV RUNTIME_MODE=allinone \
     CONSOLE_MYSQL_HOST=127.0.0.1 \
     CONSOLE_MYSQL_PORT=3306 \
@@ -157,8 +158,10 @@ ENV RUNTIME_MODE=allinone \
     BACKUP_BASE_DIR=/backups \
     STORAGES_CONFIG_FILE=/shared/storages.json \
     BACKUP_POLICY_FILE=/shared/backup_policy.json \
+    PROJECT_ROOT=/app \
     CELERY_BROKER_URL=redis://127.0.0.1:6379/0 \
     CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0 \
+    MYSQLD_EXTRA_ARGS="--default-authentication-plugin=mysql_native_password --log-bin=mysql-bin --binlog-format=ROW --binlog-row-image=FULL --binlog-row-metadata=FULL --server-id=1 --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --explicit_defaults_for_timestamp=true --bind-address=0.0.0.0 --default-time-zone=+08:00 --binlog-expire-logs-seconds=2592000" \
     DJANGO_SETTINGS_MODULE=config.settings \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

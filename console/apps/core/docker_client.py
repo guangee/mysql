@@ -325,11 +325,24 @@ def _run_pitr_restore_local(target_time: str, full_backup_timestamp: str = "") -
     env = _local_restore_env(mysql_data_dir(), auto_stop="false")
     pitr = subprocess.run(cmd, capture_output=True, text=True, timeout=7200, check=False, env=env)
     logs.append(f"[PITR 脚本] exit={pitr.returncode}\n{(pitr.stdout or '') + (pitr.stderr or '')}".strip())
-    start = control_mysql_service("start", wait_ready=True)
-    logs.append(f"[启动 MySQL] {start.get('message') or ''}")
+    # 脚本内 copy binlog 后可能留下 root 属主文件，启动前强制纠正
+    data_dir = mysql_data_dir()
+    subprocess.run(["chown", "-R", "mysql:mysql", str(data_dir)], capture_output=True, check=False)
+    subprocess.run(["chmod", "700", str(data_dir)], capture_output=True, check=False)
+    logs.append("[权限] chown mysql:mysql datadir done")
+    start_rc = 0
+    try:
+        start = control_mysql_service("start", wait_ready=True, ready_timeout=300)
+        logs.append(f"[启动 MySQL] {start.get('message') or start.get('status') or ''}")
+        if not _mysql_ping_local(timeout=10):
+            start_rc = 1
+            logs.append("[启动 MySQL] ping 未就绪")
+    except Exception as exc:
+        start_rc = 1
+        logs.append(f"[启动 MySQL] failed: {exc}")
     return subprocess.CompletedProcess(
         args=cmd,
-        returncode=pitr.returncode,
+        returncode=pitr.returncode if pitr.returncode != 0 else start_rc,
         stdout="\n\n".join(logs),
         stderr="",
     )
@@ -771,14 +784,24 @@ def _safe_int(value) -> int:
 
 def _mysql_ping_local(timeout: int = 15) -> bool:
     password = settings.MYSQL_ROOT_PASSWORD
-    result = subprocess.run(
+    sock = "/var/run/mysqld/mysqld.sock"
+    candidates = [
         ["mysqladmin", "ping", "-h127.0.0.1", "-uroot", f"-p{password}", "--silent"],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
-    return result.returncode == 0
+        ["mysqladmin", "ping", f"--socket={sock}", "-uroot", f"-p{password}", "--silent"],
+        ["mysqladmin", "ping", "-h127.0.0.1", "-uroot", "--silent"],
+        ["mysqladmin", "ping", f"--socket={sock}", "-uroot", "--silent"],
+    ]
+    for cmd in candidates:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode == 0:
+            return True
+    return False
 
 
 def _mysql_container_ping(container_name: str, timeout: int = 15) -> bool:
@@ -890,15 +913,13 @@ def get_mysql_service_status() -> dict:
 def _start_mysqld_local() -> None:
     helper = Path("/usr/local/bin/mysql-service")
     if helper.exists():
-        result = subprocess.run(
+        # 异步拉起，由 control_mysql_service(wait_ready=True) 轮询就绪，避免子进程 120s 超时误杀
+        subprocess.Popen(
             ["bash", str(helper), "start"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
-        if result.returncode != 0:
-            raise DockerClientError((result.stderr or result.stdout or "启动 mysqld 失败").strip()[:500])
         return
     # fallback: docker-entrypoint style
     cmd = ["mysqld", "--user=mysql"]
