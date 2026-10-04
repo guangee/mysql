@@ -18,7 +18,23 @@
 | 小生产 | ≥ 8 GB（含 InnoDB buffer pool） |
 | 含 DTS 大表同步 | ≥ 16 GB |
 
-## 快速开始
+## 客户部署包（推荐）
+
+每次推送到 `master` / 打 `v*` 标签时，GitHub Actions 会产出可直接执行的部署包：
+
+- Artifact / Release 附件：`mysql-console-<version>.tar.gz`
+- 内容：`docker-compose.yml`、`README.md`、`.env.example`、`data/` 配置目录
+
+```bash
+tar -xzf mysql-console-*.tar.gz
+cd mysql-console-*
+cp .env.example .env   # 修改密码
+docker compose pull && docker compose up -d
+```
+
+本地也可手动打包：`./code/tools/pack_deploy.sh ./dist`
+
+## 快速开始（源码构建）
 
 ### 1. 配置环境变量
 
@@ -40,7 +56,7 @@ docker compose up -d --build
 - 健康检查：`GET /api/healthz/`
 - 账号：`.env` 中 `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD`
 
-数据卷与旧版兼容：`./data/mysql_data`、`./data/backups`、`./data/console_data`、`./shared` 等可直接沿用。
+数据卷与旧版兼容：`./data/mysql_data`、`./data/backups`、`./data/console_data`、`./data/shared` 等可直接沿用。
 
 ### 3. 查看状态
 
@@ -59,7 +75,7 @@ docker compose exec mysql tail -f /backups/backup.log
 2. 拉取/构建本仓库最新 `docker-compose.yml`（仅一个 `mysql` 服务，无 sock）
 3. 按 `.env.example` 补齐密码与 `CONSOLE_PORT` 等变量（一体镜像内 MySQL/Redis 地址已内置，不必再配）
 4. `docker compose up -d --build`
-5. 用原路径挂载：`./data/mysql_data`、`./data/mysql_config`、`./data/backups`、`./data/console_data`、`./shared`、`./data/logs`
+5. 用原路径挂载：`./data/mysql_data`、`./data/mysql_config`、`./data/backups`、`./data/console_data`、`./data/shared`、`./data/logs`
 6. 验证：`curl http://127.0.0.1:${CONSOLE_PORT}/api/healthz/` 返回 `"ok": true`，控制台可登录
 
 控制台元数据仍在 `console_data`（SQLite），业务数据仍在 `mysql_data`，一般无需导库。
@@ -221,7 +237,7 @@ docker-compose run --rm \
 - 时区：东8区（Asia/Shanghai）本地时间（可通过 `RESTORE_TZ` 环境变量修改）
 - 示例：`"2025-11-27 18:23:10"`
 
-**详细说明请参考**：[时间格式使用说明](docs/使用说明-时间格式.md)
+**详细说明请参考**：[时间格式使用说明](doc/使用说明-时间格式.md)
 
 **说明**：
 - 脚本会自动查找目标时间之前的最新备份（全量或增量）
@@ -358,36 +374,26 @@ environment:
 
 ```
 mysql/
-├── docker-compose.yml               # Compose 编排（留在根目录）
+├── docker-compose.yml               # Compose 编排
 ├── run.sh                           # 官方入口：构建一体镜像并 compose up
 ├── .env.example                     # 环境变量模板（密码/端口/调度）
 ├── README.md                        # 主文档
-├── console/                         # Django 控制台 API（打进一体镜像）
-├── frontend/                        # Vue 控制台页面（构建产物打进一体镜像）
-├── shared/                          # 容器间共享的存储与备份策略
-├── docker/                          # 一体镜像构建
-│   ├── Dockerfile                   # targets: mysql-only | allinone（默认）
-│   ├── entrypoint-allinone.sh
-│   ├── mysql-service.sh
-│   ├── docker-entrypoint.sh
-│   └── …
-├── src/                             # Python 包源码（src layout）
-│   └── mysql_backup/                # 包名；容器内: python -m mysql_backup
-│       ├── cli.py
-│       ├── core/
-│       └── tasks/
-├── pyproject.toml                   # 包元数据 / console script: mysql-backup
-├── tools/                           # 主机侧辅助脚本（不进镜像）
-├── tests/                           # 主机侧集成测试
-├── docs/                            # 补充文档
-└── data/                            # 运行时数据（已 gitignore）
-    ├── mysql_data/                  # MySQL 数据目录
-    ├── mysql_config/                # MySQL 配置
-    └── backups/                     # 备份文件
-        ├── full/
-        ├── incremental/
-        ├── binlog_backup_*/
-        └── backup.log
+├── pyproject.toml                   # mysql-backup 包元数据
+├── code/                            # 业务代码
+│   ├── console/                     # Django 管理端 API
+│   ├── frontend/                    # Vue 管理端页面
+│   ├── mysql_backup/                # 备份/恢复 CLI（容器内: python -m mysql_backup）
+│   ├── tests/                       # 集成测试
+│   └── tools/                       # 主机侧辅助脚本（含镜像推送）
+├── docker/                          # 一体镜像构建（targets: mysql-only | allinone）
+├── doc/                             # 补充文档
+└── data/                            # 运行时数据卷（gitignore）
+    ├── mysql_data/
+    ├── mysql_config/
+    ├── backups/
+    ├── console_data/
+    ├── logs/
+    └── shared/                      # storages.json / backup_policy.json
 ```
 
 ## 备份存储结构
@@ -549,11 +555,11 @@ docker-compose exec mysql python3 -m mysql_backup backup cleanup
 
 ## 相关文档
 
-- [时间格式使用说明](docs/使用说明-时间格式.md) - 时间点恢复的时间格式说明
-- [注意事项](docs/注意事项.md) - 测试过程中发现的问题和解决方案
-- [PITR 说明](docs/README_PITR.md) - 时间点恢复详细文档
-- [恢复说明](docs/README_RESTORE.md) - 普通恢复详细文档
-- [测试流程](docs/TEST_FLOW.md) - 测试流程说明
+- [时间格式使用说明](doc/使用说明-时间格式.md) - 时间点恢复的时间格式说明
+- [注意事项](doc/注意事项.md) - 测试过程中发现的问题和解决方案
+- [PITR 说明](doc/README_PITR.md) - 时间点恢复详细文档
+- [恢复说明](doc/README_RESTORE.md) - 普通恢复详细文档
+- [测试流程](doc/TEST_FLOW.md) - 测试流程说明
 
 ## 许可证
 

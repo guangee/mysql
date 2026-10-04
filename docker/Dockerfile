@@ -114,7 +114,7 @@ RUN apt-get update \
 ENV TZ=Asia/Shanghai
 
 RUN mkdir -p /backups /opt/mysql-backup
-COPY src /opt/mysql-backup/src
+COPY code/mysql_backup /opt/mysql-backup/src/mysql_backup
 ENV PYTHONPATH=/opt/mysql-backup/src
 RUN printf '%s\n' '#!/bin/sh' 'exec python3 -m mysql_backup "$@"' > /usr/local/bin/mysql-backup \
     && chmod +x /usr/local/bin/mysql-backup \
@@ -141,9 +141,9 @@ CMD ["mysqld"]
 # ---------- 前端构建 ----------
 FROM hub.coding-space.cn/library/node:20-alpine AS frontend-builder
 WORKDIR /frontend
-COPY frontend/.npmrc frontend/package.json ./
+COPY code/frontend/.npmrc code/frontend/package.json ./
 RUN npm install --registry=https://registry.npmmirror.com
-COPY frontend/ .
+COPY code/frontend/ .
 RUN npm run build
 
 # ---------- 一体镜像：MySQL + Console + Frontend ----------
@@ -186,19 +186,19 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && ln -sf /usr/bin/python3 /usr/local/bin/python3
 
 WORKDIR /app
-COPY console/pip.conf /etc/pip.conf
-COPY console/requirements.txt /app/requirements.txt
+COPY code/console/pip.conf /etc/pip.conf
+COPY code/console/requirements.txt /app/requirements.txt
 # Ubuntu 上编译 mysqlclient 易失败；一体镜像改用 PyMySQL（见 config/__init__.py）
 RUN grep -v '^mysqlclient' /app/requirements.txt > /tmp/requirements-allinone.txt \
     && (pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-allinone.txt \
         || pip3 install --no-cache-dir -r /tmp/requirements-allinone.txt)
 
-COPY console/ /app/
+COPY code/console/ /app/
 RUN chmod +x /app/entrypoint.sh \
     && mkdir -p /app/data /app/staticfiles /app/logs /var/log/nginx /usr/share/nginx/html /shared /backups/pitr-work
 
-COPY console/nginx.conf /etc/nginx/conf.d/default.conf
-COPY console/redis.conf /app/redis.conf
+COPY code/console/nginx.conf /etc/nginx/conf.d/default.conf
+COPY code/console/redis.conf /app/redis.conf
 COPY --from=frontend-builder /frontend/dist /usr/share/nginx/html
 
 COPY docker/mysql-service.sh /usr/local/bin/mysql-service

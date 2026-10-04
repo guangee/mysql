@@ -2,10 +2,6 @@ services:
   mysql:
     image: ${MYSQL_IMAGE:-zziaguan/mysql:8.0.46-allinone}
     container_name: ${MYSQL_CONTAINER_NAME:-mysql8046}
-    build:
-      context: ./
-      dockerfile: docker/Dockerfile
-      target: allinone
     restart: unless-stopped
     env_file:
       - .env

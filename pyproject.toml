@@ -14,4 +14,5 @@ license = { text = "Proprietary" }
 mysql-backup = "mysql_backup.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["code"]
+include = ["mysql_backup*"]

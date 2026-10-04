@@ -30,7 +30,7 @@ usage() {
   MYSQL_IMAGE=registry.example.com/mysql:allinone ./run.sh
 
 说明:
-  旧版「单独构建 console/Dockerfile」已废弃；请使用本脚本或直接 docker compose。
+  旧版「单独构建 code/console/Dockerfile」已废弃；请使用本脚本或直接 docker compose。
 EOF
 }
 
