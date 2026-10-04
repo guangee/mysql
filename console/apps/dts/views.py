@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 
 from apps.api.permissions import IsSuperUser, get_client_ip
 from apps.core.models import AuditLog
+from apps.dts.events import list_sql_events
 from apps.dts.models import DtsTask
 from apps.dts.serializers import DtsTableSyncSerializer, DtsTaskSerializer, DtsTaskWriteSerializer, DtsTestConnectionSerializer
 from apps.dts.sync import (
@@ -149,6 +150,20 @@ class DtsTaskDetailView(APIView):
             "task": DtsTaskSerializer(task).data,
             "tables": DtsTableSyncSerializer(tables, many=True).data,
         })
+
+
+class DtsTaskSqlEventsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id: int):
+        task = DtsTask.objects.filter(pk=task_id).first()
+        if not task:
+            return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            limit = int(request.query_params.get("limit") or 200)
+        except (TypeError, ValueError):
+            limit = 200
+        return Response(list_sql_events(task.id, limit=limit))
 
     def patch(self, request, task_id: int):
         denied = _require_superuser(request)

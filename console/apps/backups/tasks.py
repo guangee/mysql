@@ -181,6 +181,7 @@ def run_database_pitr_task(job_id: int):
         wait_mysql_container_ready(container)
         found = dump_database_from_container(container, job.source_database, dump_path)
         if not found:
+            job.output_log = "\n".join(logs)[-50000:]
             _finish(job, error=f"目标时间点不存在数据库 {job.source_database}")
             return
         prepare_production_database(job.target_database, job.write_mode)
@@ -191,9 +192,13 @@ def run_database_pitr_task(job_id: int):
         job.finished_at = timezone.now()
         job.save()
     except DockerClientError as exc:
+        if logs and not job.output_log:
+            job.output_log = "\n".join(logs)[-50000:]
         _finish(job, error=str(exc))
     except Exception as exc:
         logger.exception("database pitr %s failed", job_id)
+        if logs and not job.output_log:
+            job.output_log = "\n".join(logs)[-50000:]
         _finish(job, error=str(exc))
     finally:
         cleanup_pitr_resources(container, volume)

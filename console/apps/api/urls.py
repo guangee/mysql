@@ -31,6 +31,7 @@ from apps.api.views import (
     DatabaseQueryView,
     DatabaseSchemaChangesView,
     DatabaseTableStructureView,
+    HealthView,
     LoginView,
     MeView,
     MySQLServiceView,
@@ -45,6 +46,7 @@ router.register("backups/jobs", BackupJobViewSet, basename="backup-job")
 router.register("storages", StorageBackendViewSet, basename="storage")
 
 urlpatterns = [
+    path("healthz/", HealthView.as_view(), name="api-healthz"),
     path("auth/login/", LoginView.as_view(), name="api-login"),
     path("auth/refresh/", TokenRefreshView.as_view(), name="api-token-refresh"),
     path("auth/me/", MeView.as_view(), name="api-me"),

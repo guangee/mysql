@@ -1,68 +1,39 @@
 services:
   mysql:
-    image: ${MYSQL_IMAGE}
-    container_name: ${MYSQL_CONTAINER_NAME}
+    image: ${MYSQL_IMAGE:-zziaguan/mysql:8.0.46-allinone}
+    container_name: ${MYSQL_CONTAINER_NAME:-mysql8046}
     build:
       context: ./
       dockerfile: docker/Dockerfile
+      target: allinone
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      RUNTIME_MODE: allinone
+      CONSOLE_MYSQL_HOST: "127.0.0.1"
+      CONSOLE_MYSQL_PORT: "3306"
+      MYSQL_DATA_DIR: /var/lib/mysql
+      MYSQL_CONFIG_DIR: /etc/mysql/conf.d
+      BACKUP_BASE_DIR: /backups
+      STORAGES_CONFIG_FILE: /shared/storages.json
+      BACKUP_POLICY_FILE: /shared/backup_policy.json
+      PROJECT_ROOT: /app
+      CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+      CELERY_RESULT_BACKEND: redis://127.0.0.1:6379/0
     volumes:
       - ./data/mysql_data:/var/lib/mysql
       - ./data/mysql_config:/etc/mysql/conf.d
       - ./data/backups:/backups
       - ./shared:/shared
-    ports:
-      - "${MYSQL_PORT}:3306"
-    networks:
-      - backup-network
-    entrypoint: ["/usr/local/bin/docker-entrypoint-with-backup.sh"]
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --log-bin=mysql-bin
-      - --binlog-format=ROW
-      - --binlog-row-image=FULL
-      - --binlog-row-metadata=FULL
-      - --server-id=1
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_general_ci
-      - --explicit_defaults_for_timestamp=true
-      - --bind-address=0.0.0.0
-      - --default-time-zone=+08:00
-      - --binlog-expire-logs-seconds=2592000
-
-  console:
-    image: ${CONSOLE_IMAGE:-mysql-console:latest}
-    container_name: mysql-console
-    build:
-      context: .
-      dockerfile: console/Dockerfile
-    restart: unless-stopped
-    depends_on:
-      - mysql
-    env_file:
-      - .env
-    environment:
-      CONSOLE_MYSQL_HOST: mysql
-      CONSOLE_MYSQL_PORT: "3306"
-      PROJECT_ROOT: /app
-      BACKUP_BASE_DIR: /backups
-      STORAGES_CONFIG_FILE: /shared/storages.json
-      BACKUP_POLICY_FILE: /shared/backup_policy.json
-      MYSQL_DATA_DIR: /var/lib/mysql
-      MYSQL_CONFIG_DIR: /etc/mysql/conf.d
-    ports:
-      - "${CONSOLE_PORT:-8888}:80"
-    volumes:
-      - ./shared:/shared
-      - ./data/backups:/backups
       - ./data/console_data:/app/data
       - ./data/logs:/app/logs
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - backup-network
-
-networks:
-  backup-network:
-    driver: bridge
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+      - "${CONSOLE_PORT:-8888}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/api/healthz/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 90s

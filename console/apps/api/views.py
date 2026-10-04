@@ -184,6 +184,36 @@ class MeView(APIView):
         )
 
 
+class HealthView(APIView):
+    """一体交付健康检查：不要求登录。"""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        from apps.core.runtime import is_allinone, runtime_mode
+
+        mysql_ok = False
+        mysql_error = ""
+        try:
+            status_info = get_mysql_service_status()
+            mysql_ok = bool(status_info.get("ready"))
+            if not mysql_ok:
+                mysql_error = status_info.get("error") or status_info.get("status") or "not_ready"
+        except Exception as exc:
+            mysql_error = str(exc)[:200]
+
+        payload = {
+            "ok": mysql_ok,
+            "runtime_mode": runtime_mode(),
+            "allinone": is_allinone(),
+            "mysql": {"ready": mysql_ok, "error": mysql_error},
+            "console": {"ok": True},
+        }
+        code = status.HTTP_200_OK if mysql_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+        return Response(payload, status=code)
+
+
 class DashboardView(APIView):
     permission_classes = [IsAuthenticated]
 

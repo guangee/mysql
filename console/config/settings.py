@@ -131,8 +131,9 @@ else:
 CORS_ALLOW_CREDENTIALS = True
 
 # MySQL connection (managed instance)
-MYSQL_HOST = os.environ.get("CONSOLE_MYSQL_HOST", "mysql")
-MYSQL_PORT = int(os.environ.get("CONSOLE_MYSQL_PORT", os.environ.get("MYSQL_PORT", "3306")))
+_DEFAULT_MYSQL_HOST = "127.0.0.1" if os.environ.get("RUNTIME_MODE", "allinone") == "allinone" else "mysql"
+MYSQL_HOST = os.environ.get("CONSOLE_MYSQL_HOST", _DEFAULT_MYSQL_HOST)
+MYSQL_PORT = int(os.environ.get("CONSOLE_MYSQL_PORT", "3306"))
 MYSQL_ROOT_PASSWORD = os.environ.get("MYSQL_ROOT_PASSWORD", "")
 MYSQL_USER = os.environ.get("MYSQL_USER", "testuser")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD", "")
@@ -140,7 +141,12 @@ MYSQL_BACKUP_USER = os.environ.get("MYSQL_BACKUP_USER", "")
 MYSQL_BACKUP_PASSWORD = os.environ.get("MYSQL_BACKUP_PASSWORD", "")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "testdb")
 
-# Docker integration
+# Runtime: allinone（单容器）或 split（控制台 + 独立 MySQL 容器）
+RUNTIME_MODE = os.environ.get("RUNTIME_MODE", "allinone").strip().lower()
+if RUNTIME_MODE not in {"allinone", "split"}:
+    RUNTIME_MODE = "allinone"
+
+# Docker integration（split 模式）
 DOCKER_MYSQL_CONTAINER = os.environ.get(
     "DOCKER_MYSQL_CONTAINER",
     os.environ.get("MYSQL_CONTAINER_NAME", "mysql8046"),
@@ -199,6 +205,9 @@ DATABASE_METRICS_REDIS_KEY = "mysql_console:database_metrics"
 DATABASE_STATEMENT_REDIS_KEY = "mysql_console:database_statements"
 DATABASE_TABLE_TOP_N = int(os.environ.get("DATABASE_TABLE_TOP_N", "50"))
 SCHEMA_SYNC_INTERVAL = int(os.environ.get("SCHEMA_SYNC_INTERVAL", "300"))
+# DTS 增量拉取间隔（秒）；过短在追位点时可能让 dts 队列堆积，建议 1–3
+DTS_INCREMENTAL_INTERVAL = max(1, int(os.environ.get("DTS_INCREMENTAL_INTERVAL", "1")))
+DTS_SQL_EVENT_LIMIT = max(100, int(os.environ.get("DTS_SQL_EVENT_LIMIT", "10000")))
 
 CELERY_BEAT_SCHEDULE = {
     "collect-dashboard-snapshot": {
@@ -211,7 +220,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     "advance-dts-incremental": {
         "task": "apps.dts.tasks.advance_dts_incremental",
-        "schedule": timedelta(seconds=3),
+        "schedule": timedelta(seconds=DTS_INCREMENTAL_INTERVAL),
     },
 }
 

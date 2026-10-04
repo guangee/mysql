@@ -16,6 +16,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.core.mysql_client import MySQLClientError, mysql_cursor
+from apps.dts.events import clip_sql, event_kind, format_event_time, record_sql_events
 from apps.dts.models import DtsTask
 
 _POS_RE = re.compile(
@@ -271,27 +272,9 @@ def _task_running(task_id: int) -> bool:
 
 
 def _mysqldump_cmd(database: str) -> list[str]:
-    return [
-        "docker", "exec",
-        "-e", f"MYSQL_PWD={settings.MYSQL_ROOT_PASSWORD}",
-        settings.DOCKER_MYSQL_CONTAINER,
-        "mysqldump",
-        "-h127.0.0.1",
-        "-uroot",
-        "--single-transaction",
-        "--source-data=2",
-        "--set-gtid-purged=OFF",
-        "--hex-blob",
-        "--routines",
-        "--triggers",
-        "--events",
-        "--default-character-set=utf8mb4",
-        "--column-statistics=0",
-        "--net-buffer-length=1048576",
-        "--max-allowed-packet=67108864",
-        "--databases",
-        database,
-    ]
+    from apps.core.runtime import mysqldump_command
+
+    return mysqldump_command(database)
 
 
 def _spawn_dump(cmd: list[str]):
@@ -612,6 +595,7 @@ def advance_incremental(task_id: int, max_events: int = 2000) -> int:
     conn = None
     applied = 0
     last_event_at = task.last_event_at
+    recent: list[dict] = []
     try:
         # MySQL 默认 binlog_row_metadata=MINIMAL 时 TableMap 不含列名；
         # use_column_name_cache 会从 information_schema 补齐，避免 UNKNOWN_COLn。
@@ -639,22 +623,35 @@ def advance_incremental(task_id: int, max_events: int = 2000) -> int:
             task.refresh_from_db(fields=["status"])
             if task.status != "incremental":
                 break
+            file_name = stream.log_file or task.binlog_file
+            next_pos = int(getattr(getattr(event, "packet", None), "log_pos", 0) or 0)
             if isinstance(event, (WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent)):
                 if _as_text(event.schema) in allowed:
-                    for sql in _row_statements(conn, event, target_db):
+                    statements = list(_row_statements(conn, event, target_db))
+                    for sql in statements:
+                        item = _sql_event_record(
+                            event,
+                            sql,
+                            file_name,
+                            next_pos,
+                            ok=True,
+                            table=_as_text(event.table),
+                        )
+                        recent.append(item)
                         cur.execute(sql)
                     applied += 1
             elif isinstance(event, QueryEvent):
                 query = _as_text(getattr(event, "query", ""))
                 schema = _as_text(getattr(event, "schema", ""))
                 if _should_apply_query(schema, query, allowed):
+                    sql = _DEFINER_RE.sub("", _rewrite_database(query, source_db, target_db))
+                    item = _sql_event_record(event, sql, file_name, next_pos, ok=True, table="")
+                    recent.append(item)
                     cur.execute(f"USE {qident(target_db)}")
-                    cur.execute(_DEFINER_RE.sub("", _rewrite_database(query, source_db, target_db)))
+                    cur.execute(sql)
                     applied += 1
             elif not isinstance(event, RotateEvent):
                 pass
-            file_name = stream.log_file or task.binlog_file
-            next_pos = int(getattr(getattr(event, "packet", None), "log_pos", 0) or 0)
             if next_pos:
                 task.binlog_file = file_name
                 task.binlog_pos = next_pos
@@ -674,8 +671,29 @@ def advance_incremental(task_id: int, max_events: int = 2000) -> int:
         if applied:
             task.append_log(f"增量应用 {applied} 个事件，位点 {task.binlog_file}:{task.binlog_pos}")
         task.save()
+        record_sql_events(task.id, recent)
     except Exception as exc:
         task.refresh_from_db()
+        if recent:
+            recent[-1]["ok"] = False
+            recent[-1]["error"] = str(exc)[:500]
+            record_sql_events(task.id, recent)
+        else:
+            record_sql_events(
+                task.id,
+                [
+                    {
+                        "at": format_event_time(timezone.now()),
+                        "kind": "ERROR",
+                        "table": "",
+                        "sql": clip_sql(str(exc)),
+                        "file": task.binlog_file,
+                        "pos": task.binlog_pos,
+                        "ok": False,
+                        "error": str(exc)[:500],
+                    }
+                ],
+            )
         if task.status == "incremental":
             task.status = "error"
             task.error_message = str(exc)[:2000]
@@ -691,6 +709,25 @@ def advance_incremental(task_id: int, max_events: int = 2000) -> int:
         if conn is not None:
             conn.close()
     return applied
+
+
+def _sql_event_record(event, sql: str, file_name: str, pos: int, ok: bool, table: str) -> dict:
+    ts = getattr(event, "timestamp", None)
+    at = (
+        datetime.fromtimestamp(int(ts), tz=timezone.get_current_timezone())
+        if ts
+        else timezone.now()
+    )
+    return {
+        "at": format_event_time(at),
+        "kind": event_kind(event),
+        "table": table,
+        "sql": clip_sql(sql),
+        "file": file_name,
+        "pos": pos,
+        "ok": ok,
+        "error": "",
+    }
 
 
 def _prepare_session(cur) -> None:

@@ -26,41 +26,71 @@
       <span class="muted">{{ progressText }}</span>
     </div>
 
-    <div class="filter-row">
-      <el-input v-model="keyword" clearable placeholder="筛选表名" style="width: 240px" />
-      <el-radio-group v-model="phaseFilter">
-        <el-radio-button value="">全部</el-radio-button>
-        <el-radio-button value="pending">等待</el-radio-button>
-        <el-radio-button value="structure">结构已同步</el-radio-button>
-        <el-radio-button value="copying">同步数据</el-radio-button>
-        <el-radio-button value="done">已完成</el-radio-button>
-        <el-radio-button value="error">失败</el-radio-button>
-      </el-radio-group>
-    </div>
+    <el-tabs v-model="activeTab">
+      <el-tab-pane :label="sqlTabLabel" name="sql">
+        <div class="page-hint sql-hint">仅保留最近 {{ sqlLimit }} 条增量 SQL（Redis 内存，控制台重建后清空）。当前展示 {{ sqlEvents.length }} 条。</div>
+        <el-table :data="sqlEvents" stripe max-height="560" empty-text="暂无增量 SQL 明细">
+          <el-table-column prop="at" label="时间" width="170" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="sqlKindType(row)">{{ row.kind || '-' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="table" label="表" width="180">
+            <template #default="{ row }">{{ row.table || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="位点" width="220">
+            <template #default="{ row }">{{ row.file ? `${row.file}:${row.pos || 0}` : '-' }}</template>
+          </el-table-column>
+          <el-table-column label="SQL" min-width="360">
+            <template #default="{ row }">
+              <pre class="sql-cell">{{ row.sql || '-' }}</pre>
+              <div v-if="row.error" class="error-line">{{ row.error }}</div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
 
-    <el-table :data="filteredTables" stripe max-height="560" row-key="id">
-      <el-table-column prop="name" label="表名" min-width="220" />
-      <el-table-column label="阶段" width="120">
-        <template #default="{ row }">
-          <el-tag size="small" :type="phaseType(row.phase)">{{ row.phase_display }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="预估行数" width="120">
-        <template #default="{ row }">{{ formatRows(row.rows_total).replace('约 ', '') }}</template>
-      </el-table-column>
-      <el-table-column label="数据量" width="120">
-        <template #default="{ row }">{{ formatBytes(row.bytes_total) }}</template>
-      </el-table-column>
-      <el-table-column label="进度" min-width="220">
-        <template #default="{ row }">
-          <el-progress :percentage="row.percent || 0" :status="row.phase === 'error' ? 'exception' : (row.phase === 'done' ? 'success' : '')" :stroke-width="8" />
-          <div v-if="row.error_message" class="error-line">{{ row.error_message }}</div>
-        </template>
-      </el-table-column>
-    </el-table>
+      <el-tab-pane label="运行日志" name="logs">
+        <div v-if="task.error_message" class="error-line block">{{ task.error_message }}</div>
+        <pre class="log">{{ displayLog }}</pre>
+      </el-tab-pane>
 
-    <div v-if="task.error_message" class="error-line block">{{ task.error_message }}</div>
-    <pre class="log">{{ task.log_text || '暂无日志' }}</pre>
+      <el-tab-pane :label="tablesTabLabel" name="tables">
+        <div class="filter-row">
+          <el-input v-model="keyword" clearable placeholder="筛选表名" style="width: 240px" />
+          <el-radio-group v-model="phaseFilter">
+            <el-radio-button value="">全部</el-radio-button>
+            <el-radio-button value="pending">等待</el-radio-button>
+            <el-radio-button value="structure">结构已同步</el-radio-button>
+            <el-radio-button value="copying">同步数据</el-radio-button>
+            <el-radio-button value="done">已完成</el-radio-button>
+            <el-radio-button value="error">失败</el-radio-button>
+          </el-radio-group>
+        </div>
+
+        <el-table :data="filteredTables" stripe max-height="560" row-key="id">
+          <el-table-column prop="name" label="表名" min-width="220" />
+          <el-table-column label="阶段" width="120">
+            <template #default="{ row }">
+              <el-tag size="small" :type="phaseType(row.phase)">{{ row.phase_display }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="预估行数" width="120">
+            <template #default="{ row }">{{ formatRows(row.rows_total).replace('约 ', '') }}</template>
+          </el-table-column>
+          <el-table-column label="数据量" width="120">
+            <template #default="{ row }">{{ formatBytes(row.bytes_total) }}</template>
+          </el-table-column>
+          <el-table-column label="进度" min-width="220">
+            <template #default="{ row }">
+              <el-progress :percentage="row.percent || 0" :status="row.phase === 'error' ? 'exception' : (row.phase === 'done' ? 'success' : '')" :stroke-width="8" />
+              <div v-if="row.error_message" class="error-line">{{ row.error_message }}</div>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
@@ -75,8 +105,12 @@ const router = useRouter()
 const loading = ref(false)
 const task = ref({})
 const tables = ref([])
+const sqlEvents = ref([])
+const sqlTotal = ref(0)
+const sqlLimit = ref(10000)
 const keyword = ref('')
 const phaseFilter = ref('')
+const activeTab = ref('sql')
 let timer = null
 
 const filteredTables = computed(() => {
@@ -86,6 +120,22 @@ const filteredTables = computed(() => {
     if (word && !String(row.name).toLowerCase().includes(word)) return false
     return true
   })
+})
+
+const sqlTabLabel = computed(() => {
+  if (sqlTotal.value) return `增量 SQL (${sqlTotal.value})`
+  return '增量 SQL'
+})
+
+const tablesTabLabel = computed(() => {
+  const total = task.value.table_total || tables.value.length || 0
+  return total ? `表同步详情 (${total})` : '表同步详情'
+})
+
+const displayLog = computed(() => {
+  const text = (task.value.log_text || '').trim()
+  if (!text) return '暂无日志'
+  return text.split('\n').reverse().join('\n')
 })
 
 const stepActive = computed(() => {
@@ -151,12 +201,23 @@ function phaseType(phase) {
   return { pending: 'info', structure: 'warning', copying: 'primary', done: 'success', error: 'danger' }[phase] || 'info'
 }
 
+function sqlKindType(row) {
+  if (row.ok === false) return 'danger'
+  return { INSERT: 'success', UPDATE: 'warning', DELETE: 'danger', DDL: 'primary', ERROR: 'danger' }[row.kind] || 'info'
+}
+
 async function load(silent = false) {
   if (!silent) loading.value = true
   try {
-    const { data } = await dtsApi.detail(route.params.id)
+    const [{ data }, events] = await Promise.all([
+      dtsApi.detail(route.params.id),
+      dtsApi.sqlEvents(route.params.id, 200),
+    ])
     task.value = data.task || {}
     tables.value = data.tables || []
+    sqlEvents.value = events.data?.items || []
+    sqlTotal.value = events.data?.total || 0
+    sqlLimit.value = events.data?.limit || 10000
   } finally {
     loading.value = false
   }
@@ -178,18 +239,27 @@ onUnmounted(() => clearInterval(timer))
 .summary { display: grid; gap: 8px; margin-bottom: 16px; }
 .filter-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .error-line { color: #f56c6c; font-size: 12px; }
-.block { margin-top: 12px; }
+.block { margin-bottom: 12px; }
 .log {
-  margin: 12px 0 0;
-  padding: 8px 10px;
+  margin: 0;
+  padding: 12px 14px;
   background: #f5f7fa;
   border-radius: 4px;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: pre-wrap;
-  max-height: 220px;
+  max-height: min(62vh, 640px);
   overflow: auto;
 }
-:deep(.el-progress-bar__inner) { transition: none; }
+.sql-hint { margin-bottom: 12px; }
+.sql-cell {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow: auto;
+}
 :deep(.el-progress__text) { font-size: 12px !important; }
 </style>

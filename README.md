@@ -1,71 +1,73 @@
-# MySQL 8.0 备份恢复方案
+# MySQL 一体控制台（单镜像多进程）
 
-基于 Docker Compose 的 MySQL 8.0 数据库备份恢复方案，使用 Percona-XtraBackup 进行全量和增量备份，支持将备份上传到外部 S3 兼容对象存储，并提供时间点恢复（PITR）功能。
+一个 Docker 镜像同时提供 **MySQL 8.0**、Web 控制台、备份/恢复、DTS 近实时同步与参数管理（类似 GitLab 的一体交付）。容器内多进程：`mysqld` + Redis + Celery + Gunicorn + Nginx。
 
 ## 功能特性
 
-- ✅ **MySQL 8.0.35** 数据库
-- ✅ **Percona-XtraBackup 8.0** 全量和增量备份
-- ✅ **S3 兼容对象存储客户端**（在控制台配置外部桶，如 AWS S3 / OSS / COS）
-- ✅ **自动定时备份**（Cron 调度）
-- ✅ **手动备份**（全量/增量）
-- ✅ **普通恢复**（恢复到备份时间点）
-- ✅ **时间点恢复（PITR）**（恢复到任意指定时间点）
-- ✅ **钉钉机器人通知**（备份成功/失败提醒）
-- ✅ **自动清理旧备份**
-- ✅ **完整的日志记录**
+- ✅ **MySQL 8.0.46** + Percona XtraBackup
+- ✅ **Web 控制台**（库表、账号、参数、备份、PITR、DTS）
+- ✅ **S3 兼容对象存储客户端**（控制台配置外部桶）
+- ✅ **自动/手动备份**、时间点恢复、钉钉通知
+- ✅ **无需挂载 docker.sock**（运维与 PITR 均在容器内完成本地执行）
+
+## 资源建议
+
+| 场景 | 建议内存 |
+|------|----------|
+| 试用/开发 | ≥ 4 GB |
+| 小生产 | ≥ 8 GB（含 InnoDB buffer pool） |
+| 含 DTS 大表同步 | ≥ 16 GB |
 
 ## 快速开始
 
 ### 1. 配置环境变量
 
-复制 `.env.example` 为 `.env` 后按环境修改：
-
 ```bash
 cp .env.example .env
+# 至少修改 MYSQL_ROOT_PASSWORD、CONSOLE_ADMIN_PASSWORD、CONSOLE_SECRET_KEY
 ```
 
-对象存储请在控制台「对象存储」页面配置外部 S3 兼容 endpoint（本项目不内置 S3 服务端）。可选地也可在 `.env` 中填写 `S3_*` 作为首次导入回退。
+对象存储在控制台「对象存储」配置；也可选填 `.env` 中的 `S3_*` 作首次导入。
 
-MySQL / 备份调度示例：
-
-```yaml
-services:
-  mysql:
-    environment:
-      # MySQL 配置
-      MYSQL_ROOT_PASSWORD: your_root_password
-      MYSQL_DATABASE: your_database
-      
-      # 备份配置
-      FULL_BACKUP_SCHEDULE: "0 2 * * 0"        # 每周日凌晨 2 点
-      INCREMENTAL_BACKUP_SCHEDULE: "0 3 * * *"  # 每天凌晨 3 点
-      BACKUP_RETENTION_DAYS: 30
-      
-      # 钉钉机器人通知配置（可选）
-      DINGTALK_WEBHOOK_ENABLED: false
-      # DINGTALK_WEBHOOK_URL: https://oapi.dingtalk.com/robot/send?access_token=your_token
-```
-
-### 2. 启动服务
+### 2. 启动（仅一个业务容器）
 
 ```bash
-docker-compose up -d
+docker compose up -d --build
 ```
 
-带界面的控制台（性能、备份、恢复）和 MySQL 一起启动。首次会构建 `mysql-console` 镜像，也可以单独执行 `./run.sh`。浏览器打开 `http://127.0.0.1:8888`，账号见 `.env` 里的 `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD`。控制台在容器网络内连接 `mysql:3306`，宿主机映射端口只给外部客户端使用。
+- MySQL：`localhost:${MYSQL_PORT}`（默认 3306）
+- 控制台：`http://127.0.0.1:${CONSOLE_PORT}`（默认 8888）
+- 健康检查：`GET /api/healthz/`
+- 账号：`.env` 中 `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD`
 
-### 3. 查看服务状态
+数据卷与旧版兼容：`./data/mysql_data`、`./data/backups`、`./data/console_data`、`./shared` 等可直接沿用。
+
+### 3. 查看状态
 
 ```bash
-# 查看容器状态
-docker-compose ps
+docker compose ps
+docker compose logs -f mysql
+curl -s http://127.0.0.1:8888/api/healthz/
+docker compose exec mysql tail -f /backups/backup.log
+```
 
-# 查看日志
-docker-compose logs -f mysql
+### 从双容器升级到一体镜像
 
-# 查看备份日志
-docker-compose exec mysql tail -f /backups/backup.log
+旧版是 `mysql` + `console` 两个服务，并可能挂载 `/var/run/docker.sock`。升级步骤：
+
+1. 停掉旧栈：`docker compose down`（**不要**加 `-v`，保留数据卷）
+2. 拉取/构建本仓库最新 `docker-compose.yml`（仅一个 `mysql` 服务，无 sock）
+3. 按 `.env.example` 补齐 `RUNTIME_MODE=allinone`、`CONSOLE_PORT` 等变量
+4. `docker compose up -d --build`
+5. 用原路径挂载：`./data/mysql_data`、`./data/mysql_config`、`./data/backups`、`./data/console_data`、`./shared`、`./data/logs`
+6. 验证：`curl http://127.0.0.1:${CONSOLE_PORT}/api/healthz/` 返回 `"ok": true`，控制台可登录
+
+控制台元数据仍在 `console_data`（SQLite），业务数据仍在 `mysql_data`，一般无需导库。
+
+### 仅构建数据库层（无控制台）
+
+```bash
+docker build -f docker/Dockerfile --target mysql-only -t zziaguan/mysql:8.0.46 .
 ```
 
 ## 主动备份

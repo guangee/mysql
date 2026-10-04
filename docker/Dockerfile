@@ -1,4 +1,6 @@
-FROM hub.coding-space.cn/library/ubuntu:22.04
+# syntax=docker/dockerfile:1
+# targets: mysql-only（仅数据库）| allinone（默认，MySQL+控制台）
+FROM hub.coding-space.cn/library/ubuntu:22.04 AS mysql-only
 USER root
 ENV ANDROID_HOME=/opt/android
 ENV MYSQL_VERSION=8.0.46
@@ -135,3 +137,72 @@ EXPOSE 3306 33060
 # 使用自定义入口点
 ENTRYPOINT ["docker-entrypoint-with-backup.sh"]
 CMD ["mysqld"]
+
+# ---------- 前端构建 ----------
+FROM hub.coding-space.cn/library/node:20-alpine AS frontend-builder
+WORKDIR /frontend
+COPY frontend/.npmrc frontend/package.json ./
+RUN npm install --registry=https://registry.npmmirror.com
+COPY frontend/ .
+RUN npm run build
+
+# ---------- 一体镜像：MySQL + Console + Frontend ----------
+FROM mysql-only AS allinone
+
+ENV RUNTIME_MODE=allinone \
+    CONSOLE_MYSQL_HOST=127.0.0.1 \
+    CONSOLE_MYSQL_PORT=3306 \
+    MYSQL_DATA_DIR=/var/lib/mysql \
+    MYSQL_CONFIG_DIR=/etc/mysql/conf.d \
+    BACKUP_BASE_DIR=/backups \
+    STORAGES_CONFIG_FILE=/shared/storages.json \
+    BACKUP_POLICY_FILE=/shared/backup_policy.json \
+    CELERY_BROKER_URL=redis://127.0.0.1:6379/0 \
+    CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/0 \
+    DJANGO_SETTINGS_MODULE=config.settings \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      python3-venv \
+      python3-dev \
+      gcc \
+      pkg-config \
+      libssl-dev \
+      libmysqlclient-dev \
+      nginx \
+      redis-server \
+      curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/nginx/sites-enabled/default \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python3
+
+WORKDIR /app
+COPY console/pip.conf /etc/pip.conf
+COPY console/requirements.txt /app/requirements.txt
+# Ubuntu 上编译 mysqlclient 易失败；一体镜像改用 PyMySQL（见 config/__init__.py）
+RUN grep -v '^mysqlclient' /app/requirements.txt > /tmp/requirements-allinone.txt \
+    && (pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements-allinone.txt \
+        || pip3 install --no-cache-dir -r /tmp/requirements-allinone.txt)
+
+COPY console/ /app/
+RUN chmod +x /app/entrypoint.sh \
+    && mkdir -p /app/data /app/staticfiles /app/logs /var/log/nginx /usr/share/nginx/html /shared /backups/pitr-work
+
+COPY console/nginx.conf /etc/nginx/conf.d/default.conf
+COPY console/redis.conf /app/redis.conf
+COPY --from=frontend-builder /frontend/dist /usr/share/nginx/html
+
+COPY docker/mysql-service.sh /usr/local/bin/mysql-service
+COPY docker/entrypoint-allinone.sh /usr/local/bin/entrypoint-allinone.sh
+RUN chmod +x /usr/local/bin/mysql-service /usr/local/bin/entrypoint-allinone.sh
+
+EXPOSE 3306 33060 80
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-allinone.sh"]
+CMD []

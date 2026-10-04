@@ -45,6 +45,7 @@ export const dtsApi = {
   removeTask: (id) => http.delete(`/dts/tasks/${id}/`),
   testConnection: (data) => http.post('/dts/test-connection/', data),
   detail: (id) => http.get(`/dts/tasks/${id}/`),
+  sqlEvents: (id, limit = 200) => http.get(`/dts/tasks/${id}/sql-events/`, { params: { limit } }),
   action: (id, action, data = {}) => http.post(`/dts/tasks/${id}/${action}/`, data),
 }
 

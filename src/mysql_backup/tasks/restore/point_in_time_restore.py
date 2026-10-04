@@ -1353,6 +1353,12 @@ def restore_to_point_in_time(target_datetime: str, full_backup_timestamp: Option
 
 def stop_mysql_if_running():
     """检查并停止 MySQL 进程（如果需要）"""
+    production_dir = Path(os.environ.get("PRODUCTION_MYSQL_DATA_DIR", "/var/lib/mysql")).resolve()
+    target_dir = MYSQL_DATA_DIR.resolve()
+    if target_dir != production_dir:
+        log(f"恢复目标为独立目录 {target_dir}，不停止生产 MySQL")
+        return
+
     # 检查 MySQL 进程是否在运行
     try:
         result = subprocess.run(
