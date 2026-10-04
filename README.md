@@ -1,14 +1,14 @@
 # MySQL 一体控制台（单镜像多进程）
 
-一个 Docker 镜像同时提供 **MySQL 8.0**、Web 控制台、备份/恢复、DTS 近实时同步与参数管理（类似 GitLab 的一体交付）。容器内多进程：`mysqld` + Redis + Celery + Gunicorn + Nginx。
+一个 Docker 镜像同时提供 **MySQL 8.0**、Web 控制台、备份/恢复、DTS 近实时同步与参数管理。容器内多进程：`mysqld` + Redis + Celery + Gunicorn + Nginx。
 
 ## 功能特性
 
-- ✅ **MySQL 8.0.46** + Percona XtraBackup
-- ✅ **Web 控制台**（库表、账号、参数、备份、PITR、DTS）
-- ✅ **S3 兼容对象存储客户端**（控制台配置外部桶）
-- ✅ **自动/手动备份**、时间点恢复、钉钉通知
-- ✅ **无需挂载 docker.sock**（运维与 PITR 均在容器内完成本地执行）
+- **MySQL 8.0.46** + Percona XtraBackup
+- **Web 控制台**：监控、库表、账号、参数、备份管理、时间点恢复、DTS
+- **S3 兼容对象存储客户端**（控制台配置外部桶，本镜像不自带对象存储服务端）
+- **自动/手动备份**、整实例/单库时间点恢复、钉钉通知
+- **无需挂载 docker.sock**：运维与 PITR 均在容器内完成本地执行
 
 ## 资源建议
 
@@ -20,7 +20,7 @@
 
 ## 客户部署包（推荐）
 
-每次推送到 `master` / 打 `v*` 标签时，GitHub Actions 会产出可直接执行的部署包：
+推送到 `master` 或打 `v*` 标签时，GitHub Actions 会产出可直接执行的部署包：
 
 - Artifact / Release 附件：`mysql-console-<version>.tar.gz`
 - 内容：`docker-compose.yml`、`README.md`、`.env.example`、`data/` 配置目录
@@ -28,27 +28,22 @@
 ```bash
 tar -xzf mysql-console-*.tar.gz
 cd mysql-console-*
-cp .env.example .env   # 修改密码
+cp .env.example .env   # 修改密码后
 docker compose pull && docker compose up -d
 ```
 
-本地也可手动打包：`./code/tools/pack_deploy.sh ./dist`
+本地打包：`./code/tools/pack_deploy.sh ./dist`
 
-## 快速开始（源码构建）
+部署包内的 compose **只拉取镜像、不本地 build**。日常备份、恢复、策略修改请用控制台。
 
-### 1. 配置环境变量
+## 源码构建
 
 ```bash
 cp .env.example .env
 # 至少修改 MYSQL_ROOT_PASSWORD、CONSOLE_ADMIN_PASSWORD、CONSOLE_SECRET_KEY
-```
 
-对象存储在控制台「对象存储」配置；也可选填 `.env` 中的 `S3_*` 作首次导入。
-
-### 2. 启动（仅一个业务容器）
-
-```bash
-docker compose up -d --build
+./run.sh                 # 构建一体镜像并 docker compose up -d
+# 或：docker compose up -d --build
 ```
 
 - MySQL：`localhost:${MYSQL_PORT}`（默认 3306）
@@ -56,510 +51,192 @@ docker compose up -d --build
 - 健康检查：`GET /api/healthz/`
 - 账号：`.env` 中 `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD`
 
-数据卷与旧版兼容：`./data/mysql_data`、`./data/backups`、`./data/console_data`、`./data/shared` 等可直接沿用。
-
-### 3. 查看状态
-
 ```bash
 docker compose ps
 docker compose logs -f mysql
 curl -s http://127.0.0.1:8888/api/healthz/
-docker compose exec mysql tail -f /backups/backup.log
 ```
 
-### 从双容器升级到一体镜像
-
-旧版是 `mysql` + `console` 两个服务，并可能挂载 `/var/run/docker.sock`。升级步骤：
-
-1. 停掉旧栈：`docker compose down`（**不要**加 `-v`，保留数据卷）
-2. 拉取/构建本仓库最新 `docker-compose.yml`（仅一个 `mysql` 服务，无 sock）
-3. 按 `.env.example` 补齐密码与 `CONSOLE_PORT` 等变量（一体镜像内 MySQL/Redis 地址已内置，不必再配）
-4. `docker compose up -d --build`
-5. 用原路径挂载：`./data/mysql_data`、`./data/mysql_config`、`./data/backups`、`./data/console_data`、`./data/shared`、`./data/logs`
-6. 验证：`curl http://127.0.0.1:${CONSOLE_PORT}/api/healthz/` 返回 `"ok": true`，控制台可登录
-
-控制台元数据仍在 `console_data`（SQLite），业务数据仍在 `mysql_data`，一般无需导库。
-
-### 仅构建数据库层（无控制台）
+仅构建数据库层（无控制台）：
 
 ```bash
 docker build -f docker/Dockerfile --target mysql-only -t zziaguan/mysql:8.0.46 .
 ```
 
-## 主动备份
+旧版「`mysql` + `console` 双容器 + docker.sock」升级：`docker compose down`（不要加 `-v`），换用当前 compose，保留 `./data/*` 后 `docker compose up -d --build`。
 
-### 方式一：自动定时备份（推荐）
+## 控制台操作（优先）
 
-通过 Cron 定时任务自动执行备份，无需手动干预。
+登录控制台后：
 
-#### 配置备份计划
+| 菜单 | 用途 |
+|------|------|
+| 监控中心 | 系统负载、容量、CPU/内存；MySQL 运行状态与累计统计 |
+| 备份管理 → 备份任务 | 手动全量/增量，查看任务进度 |
+| 备份管理 → 备份文件 | 备份策略（周期、保留天数、定时清理）、上传、清理、全量恢复 |
+| 备份管理 → 时间点恢复 | 整实例 PITR、单库 PITR |
+| 对象存储 | 配置外部 S3 兼容桶 |
 
-在 `docker-compose.yml` 中配置：
+调度与保留策略在 **备份文件 → 备份策略** 中修改并保存后会同步到容器内 crontab，不必改 `docker-compose.yml`。`.env` 中的 `FULL_BACKUP_SCHEDULE` 等仅作首次导入默认值。
 
-```yaml
-environment:
-  # 全量备份计划（Cron 格式：分钟 小时 日 月 星期）
-  FULL_BACKUP_SCHEDULE: "0 2 * * 0"        # 每周日凌晨 2 点
-  INCREMENTAL_BACKUP_SCHEDULE: "0 3 * * *"  # 每天凌晨 3 点
-```
+## 命令行备份（可选）
 
-**Cron 格式说明**：`分钟 小时 日 月 星期`
-
-常用示例：
-- `0 2 * * 0` - 每周日凌晨 2 点
-- `0 3 * * *` - 每天凌晨 3 点
-- `0 */6 * * *` - 每 6 小时
-- `0 2 1 * *` - 每月 1 日凌晨 2 点
-
-#### 修改备份计划
-
-修改 `docker-compose.yml` 后重启服务：
+一体容器内 MySQL 保持运行即可：
 
 ```bash
-docker-compose restart mysql
+docker compose exec mysql python3 -m mysql_backup backup full
+docker compose exec mysql python3 -m mysql_backup backup incremental
+docker compose exec mysql python3 -m mysql_backup backup cleanup
+docker compose exec mysql ls -lh /backups/full/$(date +%Y%m%d)/
+docker compose exec mysql tail -n 100 /backups/backup.log
 ```
 
-### 方式二：手动执行全量备份
+增量备份需要先有全量备份。未配置对象存储时，备份只写本地 `./data/backups/`。
 
-**方式 A：使用统一入口（推荐）**
+## 命令行恢复（可选）
+
+**推荐走控制台**。命令行恢复会在容器内停止 `mysqld`、覆盖数据目录后再拉起，不要对整个 compose 服务 `stop`（那样会连同控制台一起停掉）。
 
 ```bash
-docker-compose exec mysql python3 -m mysql_backup backup full
+# 按全量时间戳恢复（YYYYMMDD_HHMMSS）
+docker compose exec mysql python3 -m mysql_backup restore backup 20261004_020001
+
+# 时间点恢复（东八区本地时间，可用 RESTORE_TZ 覆盖）
+docker compose exec mysql python3 -m mysql_backup restore pitr "2026-10-04 14:00:00"
 ```
 
-### 方式三：手动执行增量备份
+底层仍保留 `restore apply` 等步骤，一般由上述命令或控制台任务自动串联。时间格式详见 [doc/使用说明-时间格式.md](doc/使用说明-时间格式.md)。
 
-**方式 A：使用统一入口（推荐）**
+## 环境变量
 
-```bash
-docker-compose exec mysql python3 -m mysql_backup backup incremental
-```
+配置写在 `.env`（由 `.env.example` 复制），compose 通过 `env_file` 注入。不要把调度写进 `docker-compose.yml` 的 `environment:`。
 
-**注意**：增量备份需要先有全量备份作为基础。
+### MySQL
 
-### 查看备份状态
+| 参数 | 说明 |
+|------|------|
+| `MYSQL_ROOT_PASSWORD` | root 密码 |
+| `MYSQL_DATABASE` / `MYSQL_USER` / `MYSQL_PASSWORD` | 初始化业务库与账号 |
+| `MYSQL_BACKUP_USER` / `MYSQL_BACKUP_PASSWORD` | 可选备份专用账号；未设则用 `MYSQL_USER` 或 root |
 
-```bash
-# 查看本地备份文件
-docker-compose exec mysql ls -lh /backups/full/
-docker-compose exec mysql ls -lh /backups/incremental/
+备份用户建议权限：`RELOAD`、`PROCESS`、`LOCK TABLES`、`REPLICATION CLIENT`、`BACKUP_ADMIN`。
 
-# 查看 S3 中的备份（如果启用了 S3）
-docker-compose exec mysql mc ls s3/mysql-backups/full/
-docker-compose exec mysql mc ls s3/mysql-backups/incremental/
+### 控制台与端口
 
-# 查看备份日志
-docker-compose exec mysql tail -n 100 /backups/backup.log
-```
-
-## 主动恢复
-
-### 方式一：普通恢复（恢复到备份时间点）
-
-恢复到指定备份的时间点状态。
-
-#### 1. 停止 MySQL 服务
-
-```bash
-docker-compose stop mysql
-```
-
-#### 2. 执行恢复
-
-**方式 A：使用统一入口（推荐）**
-
-```bash
-# 恢复指定时间戳的全量备份（自动从 S3 下载，如果启用）
-docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251127_020000
-
-# 恢复全量备份并应用增量备份
-docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251127_020000 backup_20251128_030000.tar.gz backup_20251129_030000.tar.gz
-```
-
-**说明**：
-- 脚本会自动从 S3 下载备份（如果启用了 S3 备份）
-- 支持从本地备份恢复（如果备份文件已存在）
-- 支持恢复全量备份并应用多个增量备份
-
-#### 3. 应用恢复
-
-恢复脚本会下载并准备好备份，但不会自动应用到数据目录。需要手动应用：
-
-```bash
-# 使用统一入口
-docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
-
-```
-
-**环境变量选项**：
-- `USE_MOVE_BACK=true` - 使用 `--move-back`（恢复后删除恢复目录中的备份）
-- `BACKUP_EXISTING_DATA=false` - 不备份现有数据
-
-#### 4. 启动 MySQL 服务
-
-```bash
-docker-compose start mysql
-```
-
-### 方式二：时间点恢复（PITR - Point-in-Time Recovery）
-
-恢复到任意指定的时间点，而不仅仅是备份的时间点。需要二进制日志（binlog）支持。
-
-#### 1. 停止 MySQL 服务
-
-```bash
-docker-compose stop mysql
-```
-
-#### 2. 执行时间点恢复
-
-**方式 A：使用统一入口（推荐）**
-
-```bash
-# 恢复到指定时间点（自动查找备份和二进制日志）
-docker-compose run --rm \
-  -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10"
-
-# 指定全量备份时间戳
-docker-compose run --rm \
-  -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10" 20251127_020000
-
-# 指定全量备份和增量备份
-docker-compose run --rm \
-  -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 -m mysql_backup restore pitr "2025-11-27 18:23:10" 20251127_020000 backup_20251127_030000.tar.gz
-```
-
-**时间格式说明**：
-- 格式：`YYYY-MM-DD HH:MM:SS`
-- 时区：东8区（Asia/Shanghai）本地时间（可通过 `RESTORE_TZ` 环境变量修改）
-- 示例：`"2025-11-27 18:23:10"`
-
-**详细说明请参考**：[时间格式使用说明](doc/使用说明-时间格式.md)
-
-**说明**：
-- 脚本会自动查找目标时间之前的最新备份（全量或增量）
-- 自动应用所有相关的增量备份
-- 自动从备份时间点开始应用二进制日志到目标时间点
-- 如果未指定备份，会自动从 S3 下载（如果启用了 S3 备份）
-
-#### 3. 启动 MySQL 服务
-
-```bash
-docker-compose start mysql
-```
-
-#### 4. 验证恢复结果
-
-```bash
-# 连接数据库检查数据
-docker-compose exec mysql mysql -u root -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT COUNT(*) FROM your_table;"
-```
-
-## 参数配置
-
-### MySQL 配置
-
-| 参数 | 说明 | 示例 |
+| 参数 | 说明 | 默认 |
 |------|------|------|
-| `MYSQL_ROOT_PASSWORD` | MySQL root 用户密码 | `your_root_password` |
-| `MYSQL_DATABASE` | 默认数据库名 | `your_database` |
-| `MYSQL_USER` | 默认数据库用户 | `your_user` |
-| `MYSQL_PASSWORD` | 默认数据库用户密码 | `your_password` |
+| `MYSQL_IMAGE` | 一体镜像名 | `zziaguan/mysql:8.0.46-allinone` |
+| `MYSQL_PORT` / `CONSOLE_PORT` | 宿主机映射端口 | `3306` / `8888` |
+| `CONSOLE_ADMIN_USER` / `CONSOLE_ADMIN_PASSWORD` | 控制台登录 | |
+| `CONSOLE_SECRET_KEY` | Django 密钥 | |
 
-### 备份用户配置（可选）
+一体镜像内 MySQL / Redis / 控制台本机互通，无需再配 `CONSOLE_MYSQL_*`、`CELERY_*`。
 
-如果希望使用专门的备份用户（推荐），可以配置：
+### 对象存储（可选）
 
-| 参数 | 说明 | 示例 |
+本项目只内置 `mc` 客户端。优先在控制台「对象存储」配置；也可在 `.env` 填以下变量作为空库首次导入：
+
+`S3_BACKUP_ENABLED`、`S3_ENDPOINT`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_BUCKET`、`S3_REGION`、`S3_USE_SSL`、`S3_FORCE_PATH_STYLE`、`S3_ALIAS`。
+
+### 备份调度与保留（首次默认）
+
+| 参数 | 说明 | 默认 |
 |------|------|------|
-| `MYSQL_BACKUP_USER` | 备份专用用户 | `backup_user` |
-| `MYSQL_BACKUP_PASSWORD` | 备份专用用户密码 | `backup_password` |
+| `FULL_BACKUP_SCHEDULE` | 全量 Cron | `0 2 * * 0` |
+| `INCREMENTAL_BACKUP_SCHEDULE` | 增量 Cron | `0 3 * * *` |
+| `FULL_BACKUP_RETENTION_DAYS` | 全量保留天数 | `30` |
+| `INCREMENTAL_BACKUP_RETENTION_DAYS` | 增量保留天数 | `14` |
+| `BACKUP_RETENTION_DAYS` | 兼容旧字段 | `14` |
+| `LOCAL_BACKUP_RETENTION_HOURS` | 本地额外保留小时；`0` 表示上传对象存储后按策略清理 | `0` |
+| `CLEANUP_LOCAL_SCHEDULE` / `CLEANUP_S3_SCHEDULE` | 定时清理 | |
 
-**备份用户所需权限**：
-- `RELOAD`
-- `PROCESS`
-- `LOCK TABLES`
-- `REPLICATION CLIENT`
-- `BACKUP_ADMIN`
+此后以控制台「备份策略」为准。
 
-如果未设置，将依次使用 `MYSQL_USER` 或 `root` 用户。
+### 其他
 
-### S3 兼容对象存储（外部桶）
-
-本项目只内置 S3 **客户端**（`mc`），不启动任何对象存储服务端。请在控制台「对象存储」页面填写外部桶信息并测试连通性；备份任务会按启用的存储同步上传。
-
-也可在 `.env` 中配置以下变量作为空库时的首次导入回退（默认关闭）：
-
-| 参数 | 说明 | 必填 | 示例 |
-|------|------|------|------|
-| `S3_BACKUP_ENABLED` | 是否从环境变量启用/导入 S3 | 否 | `false`（默认） |
-| `S3_ENDPOINT` | S3 服务端点地址 | 启用时 | `s3.amazonaws.com` / `oss-cn-hangzhou.aliyuncs.com` |
-| `S3_ACCESS_KEY` | 访问密钥 ID | 启用时 | `your_access_key` |
-| `S3_SECRET_KEY` | 访问密钥 | 启用时 | `your_secret_key` |
-| `S3_BUCKET` | 存储桶名称 | 启用时 | `mysql-backups` |
-| `S3_REGION` | 区域 | 否 | `us-east-1` |
-| `S3_USE_SSL` | 是否使用 SSL/TLS | 否 | `true` / `false` |
-| `S3_FORCE_PATH_STYLE` | 是否使用路径样式访问 | 否 | 多数云厂商 `false`，部分兼容实现需 `true` |
-| `S3_ALIAS` | `mc` 客户端别名 | 否 | `s3`（默认值） |
-
-未配置对象存储时：
-- ✅ 备份仍然会正常执行（全量和增量备份）
-- ✅ 备份文件保存在本地目录 `./data/backups/`
-- ❌ 不会上传到对象存储
-- ❌ 增量备份只能使用本地的基础备份
-
-### 备份调度配置
-
-| 参数 | 说明 | 格式 | 默认值 |
-|------|------|------|--------|
-| `FULL_BACKUP_SCHEDULE` | 全量备份 Cron 计划 | `分钟 小时 日 月 星期` | `0 2 * * 0`（每周日凌晨 2 点） |
-| `INCREMENTAL_BACKUP_SCHEDULE` | 增量备份 Cron 计划 | `分钟 小时 日 月 星期` | `0 3 * * *`（每天凌晨 3 点） |
-| `BACKUP_RETENTION_DAYS` | 备份保留天数 | 数字 | `30` |
-| `LOCAL_BACKUP_RETENTION_HOURS` | 本地备份保留时间（小时） | 数字 | `0`（上传到对象存储后立即删除） |
-
-**注意**：`LOCAL_BACKUP_RETENTION_HOURS` 仅在已配置并启用对象存储上传时生效；未启用时本地备份将按保留策略保留。
-
-### 钉钉机器人通知配置
-
-| 参数 | 说明 | 必填 | 示例 |
-|------|------|------|------|
-| `DINGTALK_WEBHOOK_ENABLED` | 是否启用钉钉通知 | 是 | `true` / `false` |
-| `DINGTALK_WEBHOOK_URL` | 钉钉机器人 Webhook URL | 是（当启用时） | `https://oapi.dingtalk.com/robot/send?access_token=your_token` |
-
-#### 配置示例
-
-```yaml
-environment:
-  # 启用钉钉通知
-  DINGTALK_WEBHOOK_ENABLED: true
-  # 钉钉机器人 Webhook URL
-  DINGTALK_WEBHOOK_URL: https://oapi.dingtalk.com/robot/send?access_token=your_access_token
-```
-
-#### 如何获取钉钉机器人 Webhook URL
-
-1. 在钉钉群聊中，点击右上角设置 → **智能群助手**
-2. 选择 **添加机器人** → **自定义**
-3. 设置机器人名称和头像，选择 **加签** 或 **自定义关键词** 安全设置
-4. 复制生成的 **Webhook 地址**
-5. 将地址配置到 `DINGTALK_WEBHOOK_URL` 环境变量
-
-#### 通知内容
-
-启用钉钉通知后，备份成功或失败时都会自动发送通知：
-
-**备份成功通知包含**：
-- 备份类型（全量/增量）
-- 备份时间戳
-- 备份文件名
-- 文件大小
-- S3 上传状态
-
-**备份失败通知包含**：
-- 备份类型
-- 错误时间
-- 错误提示信息
-
-### 其他配置
-
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `BACKUP_BASE_DIR` | 备份基础目录 | `/backups` |
-| `RESTORE_TZ` | 恢复时使用的时区（PITR） | `Asia/Shanghai` |
+| 参数 | 说明 |
+|------|------|
+| `DINGTALK_WEBHOOK_ENABLED` / `DINGTALK_WEBHOOK_URL` | 备份成败通知 |
+| `TZ` / `RESTORE_TZ` / `BACKUP_TIMEZONE` | 默认 `Asia/Shanghai` |
+| `BACKUP_BASE_DIR` | 容器内备份根目录，默认 `/backups` |
 
 ## 目录结构
 
 ```
 mysql/
-├── docker-compose.yml               # Compose 编排
-├── run.sh                           # 官方入口：构建一体镜像并 compose up
-├── .env.example                     # 环境变量模板（密码/端口/调度）
-├── README.md                        # 主文档
-├── pyproject.toml                   # mysql-backup 包元数据
-├── code/                            # 业务代码
-│   ├── console/                     # Django 管理端 API
-│   ├── frontend/                    # Vue 管理端页面
-│   ├── mysql_backup/                # 备份/恢复 CLI（容器内: python -m mysql_backup）
-│   ├── tests/                       # 集成测试
-│   └── tools/                       # 主机侧辅助脚本（含镜像推送）
-├── docker/                          # 一体镜像构建（targets: mysql-only | allinone）
-├── doc/                             # 补充文档
-└── data/                            # 运行时数据卷（gitignore）
+├── docker-compose.yml          # 源码侧编排（含 build）
+├── run.sh                      # 构建一体镜像并 compose up
+├── .env.example
+├── deploy/package/             # 客户部署包模板（CI 打 tar）
+├── code/                       # console / frontend / mysql_backup / tools
+├── docker/                     # 一体镜像 Dockerfile
+├── doc/
+└── data/                       # 运行时卷（gitignore）
     ├── mysql_data/
     ├── mysql_config/
     ├── backups/
     ├── console_data/
     ├── logs/
-    └── shared/                      # storages.json / backup_policy.json
+    └── shared/
 ```
 
 ## 备份存储结构
 
-### 本地存储
+按**日期目录**存放，一天可有多个压缩包，并带 `day.xml` 说明：
 
 ```
 ./data/backups/
 ├── full/
-│   └── 20251127_020000/            # 全量备份时间戳目录
-│       └── backup.tar.gz            # 备份压缩文件
+│   └── 20261004/
+│       ├── 20261004_020001_full_v0.1.0.tar.gz
+│       └── day.xml
 ├── incremental/
-│   └── 20251128_030000/            # 增量备份时间戳目录
-│       └── backup.tar.gz            # 备份压缩文件
-└── backup.log                      # 备份日志
+│   └── 20261004/
+│       ├── 20261004_030001_incr_v0.1.0.tar.gz
+│       └── day.xml
+├── LATEST_FULL_BACKUP
+└── backup.log
 ```
 
-### 对象存储结构（在控制台配置并启用后）
+压缩包名：`{YYYYMMDD}_{HHMMSS}_{full|incr}_v{版本}.tar.gz`。  
+`day.xml` 记录每个文件的可回滚时间、大小，以及库级元数据（表数、数据大小、近似行数）。兼容旧名 `backup_YYYYMMDD_HHMMSS.tar.gz` 与旧的时间戳子目录。
 
-```
-s3://mysql-backups/
-├── full/
-│   ├── backup_20251127_020000.tar.gz
-│   └── backup_20251128_020000.tar.gz
-├── incremental/
-│   ├── backup_20251128_030000.tar.gz
-│   └── backup_20251129_030000.tar.gz
-└── .metadata/
-    ├── latest_full_backup_timestamp.txt
-    └── latest_incremental_backup_timestamp.txt
-```
-
-## 监控和维护
-
-### 查看备份状态
-
-```bash
-# 查看容器状态
-docker-compose ps
-
-# 查看备份日志
-docker-compose exec mysql tail -n 100 /backups/backup.log
-
-# 查看最近的备份
-docker-compose exec mysql ls -lht /backups/full/ | head -5
-docker-compose exec mysql ls -lht /backups/incremental/ | head -5
-```
-
-### 检查 S3 中的备份
-
-```bash
-# 列出全量备份
-docker-compose exec mysql mc ls s3/mysql-backups/full/
-
-# 列出增量备份
-docker-compose exec mysql mc ls s3/mysql-backups/incremental/
-
-# 检查备份文件大小
-docker-compose exec mysql mc ls -lh s3/mysql-backups/full/
-```
-
-### 清理旧备份
-
-```bash
-# 手动清理旧备份（根据 BACKUP_RETENTION_DAYS 配置）
-# 使用统一入口（推荐）
-docker-compose exec mysql python3 -m mysql_backup backup cleanup
-
-```
+对象存储启用后，路径与本地类似：`full/YYYYMMDD/*.tar.gz`、`incremental/YYYYMMDD/*.tar.gz`。
 
 ## 故障排查
 
-### 备份失败
+```bash
+# MySQL
+docker compose exec mysql mysql -h 127.0.0.1 -u root -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT 1"
 
-1. **检查 MySQL 连接**：
-   ```bash
-   docker-compose exec mysql mysql -h 127.0.0.1 -u root -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT 1"
-   ```
+# 备份日志 / crontab
+docker compose exec mysql tail -n 200 /backups/backup.log
+docker compose exec mysql crontab -l
 
-2. **检查 S3 连接**（如果启用了 S3）：
-   ```bash
-   docker-compose exec mysql mc alias list
-   docker-compose exec mysql mc ls s3/mysql-backups/
-   ```
+# 最近一次全量指针
+docker compose exec mysql cat /backups/LATEST_FULL_BACKUP
 
-3. **查看详细日志**：
-   ```bash
-   docker-compose logs mysql | grep -i backup
-   docker-compose exec mysql tail -n 200 /backups/backup.log
-   ```
+# 增量找不到基线时，先做一次全量
+docker compose exec mysql python3 -m mysql_backup backup full
+```
 
-### 增量备份找不到基础备份
-
-如果增量备份提示找不到基础备份：
-
-1. **手动执行一次全量备份**：
-   ```bash
-   # 使用统一入口（推荐）
-   docker-compose exec mysql python3 -m mysql_backup backup full
-   
-   ```
-
-2. **检查基础备份文件**：
-   ```bash
-   docker-compose exec mysql cat /backups/LATEST_FULL_BACKUP
-   ```
-
-### Cron 任务未执行
-
-1. **检查 cron 服务状态**：
-   ```bash
-   docker-compose exec mysql service cron status
-   ```
-
-2. **查看 cron 任务列表**：
-   ```bash
-   docker-compose exec mysql crontab -l
-   ```
-
-3. **手动测试备份脚本**：
-   ```bash
-   # 使用统一入口（推荐）
-   docker-compose exec mysql python3 -m mysql_backup backup full
-   
-   ```
-
-### 恢复失败
-
-1. **检查备份文件是否存在**：
-   ```bash
-   docker-compose exec mysql ls -lh /backups/full/
-   ```
-
-2. **检查 MySQL 是否已停止**（恢复前必须停止）：
-   ```bash
-   docker-compose ps mysql
-   ```
-
-3. **查看恢复日志**：
-   ```bash
-   docker-compose logs mysql | grep -i restore
-   ```
+对象存储连通性请在控制台「对象存储」页面测试，勿假设镜像内自带 MinIO。
 
 ## 安全建议
 
-1. **修改默认密码**：在生产环境中，务必修改所有默认密码
-2. **使用备份专用用户**：配置 `MYSQL_BACKUP_USER` 和 `MYSQL_BACKUP_PASSWORD`，使用最小权限原则
-3. **网络安全**：不要将 MySQL 端口暴露到公网
-4. **S3 访问控制**：配置 MinIO 存储桶的访问策略，限制访问权限
-5. **定期测试恢复**：定期测试备份恢复流程，确保备份可用
-6. **密钥管理**：使用密钥管理服务管理访问密钥，不要硬编码在配置文件中
-
-## 性能优化
-
-1. **并行备份**：脚本已配置并行压缩，充分利用 CPU
-2. **网络优化**：如果 MinIO 在同一网络，可以减少网络延迟
-3. **存储优化**：定期清理旧备份，避免存储空间不足
-4. **压缩优化**：根据网络带宽和 CPU 性能调整压缩级别
+1. 生产环境修改全部默认密码，并限制控制台端口暴露范围
+2. 可选独立备份账号，最小权限
+3. 不要将 MySQL 端口暴露到公网
+4. 对象存储使用桶策略与独立密钥，`.env` 勿提交到公开仓库
+5. 定期在维护窗口验证恢复
 
 ## 相关文档
 
-- [时间格式使用说明](doc/使用说明-时间格式.md) - 时间点恢复的时间格式说明
-- [注意事项](doc/注意事项.md) - 测试过程中发现的问题和解决方案
-- [PITR 说明](doc/README_PITR.md) - 时间点恢复详细文档
-- [恢复说明](doc/README_RESTORE.md) - 普通恢复详细文档
-- [测试流程](doc/TEST_FLOW.md) - 测试流程说明
+- [时间格式使用说明](doc/使用说明-时间格式.md)
+- [注意事项](doc/注意事项.md)
+- [PITR 说明](doc/README_PITR.md)
+- [恢复说明](doc/README_RESTORE.md)
+- [测试流程](doc/TEST_FLOW.md)
 
 ## 许可证
 
