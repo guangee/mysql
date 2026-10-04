@@ -15,8 +15,8 @@ from apps.backups.models import (
     BackupPitrJob,
     DatabasePitrJob,
 )
-from apps.core.docker_client import (
-    DockerClientError,
+from apps.core.ops_runner import (
+    MySQLOpsError,
     cleanup_pitr_resources,
     dump_database_from_container,
     import_database_to_production,
@@ -191,7 +191,7 @@ def run_database_pitr_task(job_id: int):
         job.error_message = ""
         job.finished_at = timezone.now()
         job.save()
-    except DockerClientError as exc:
+    except MySQLOpsError as exc:
         if logs and not job.output_log:
             job.output_log = "\n".join(logs)[-50000:]
         _finish(job, error=str(exc))

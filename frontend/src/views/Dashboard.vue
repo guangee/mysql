@@ -1,6 +1,6 @@
 <template>
   <div v-loading="pageLoading">
-    <h2 class="page-title">系统概览</h2>
+    <h2 class="page-title">监控中心</h2>
     <div v-if="data.collected_at" class="page-hint">数据更新于 {{ formatDateTime(data.collected_at) }}，后台每 3 秒采样一次</div>
 
     <el-row :gutter="16" class="mb-4">

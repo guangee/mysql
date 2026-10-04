@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from apps.core.docker_client import read_file_in_mysql_container, write_file_in_mysql_container
+from apps.core.ops_runner import read_file_in_mysql_container, write_file_in_mysql_container
 from apps.core.mysql_client import MySQLClientError, mysql_cursor
 
 CONFIG_FILENAME = "99-console-tuning.cnf"
@@ -636,7 +636,7 @@ def build_memory_preset(gb: int, chunk_size: int = 134217728) -> dict[str, Any]:
 def _detect_mysql_memory_bytes() -> tuple[int, str]:
     """返回 (可用内存字节, 来源说明)。优先容器限额，否则主机 MemTotal。"""
     try:
-        from apps.core.docker_client import get_mysql_host_stats
+        from apps.core.ops_runner import get_mysql_host_stats
 
         stats = get_mysql_host_stats()
     except Exception:

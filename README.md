@@ -359,18 +359,18 @@ environment:
 ```
 mysql/
 ├── docker-compose.yml               # Compose 编排（留在根目录）
-├── run.sh                           # 构建控制台镜像并启动
-├── .env.example                     # 环境变量模板
+├── run.sh                           # 官方入口：构建一体镜像并 compose up
+├── .env.example                     # 环境变量模板（密码/端口/调度）
 ├── README.md                        # 主文档
-├── console/                         # Django 控制台 API
-├── frontend/                        # Vue 控制台页面
+├── console/                         # Django 控制台 API（打进一体镜像）
+├── frontend/                        # Vue 控制台页面（构建产物打进一体镜像）
 ├── shared/                          # 容器间共享的存储与备份策略
-├── docker/                          # 镜像构建相关
-│   ├── Dockerfile
+├── docker/                          # 一体镜像构建
+│   ├── Dockerfile                   # targets: mysql-only | allinone（默认）
+│   ├── entrypoint-allinone.sh
+│   ├── mysql-service.sh
 │   ├── docker-entrypoint.sh
-│   ├── docker-entrypoint-with-backup.sh
-│   ├── bashrc
-│   └── sources.list
+│   └── …
 ├── src/                             # Python 包源码（src layout）
 │   └── mysql_backup/                # 包名；容器内: python -m mysql_backup
 │       ├── cli.py

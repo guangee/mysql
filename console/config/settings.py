@@ -163,7 +163,8 @@ BACKUP_TIMEZONE = os.environ.get("BACKUP_TIMEZONE", "Asia/Shanghai")
 RESTORE_TIMEZONE = "Asia/Shanghai"
 DOCKER_MYSQL_IMAGE = os.environ.get("MYSQL_IMAGE", "")
 MYSQL_DATA_DIR = Path(os.environ.get("MYSQL_DATA_DIR", str(PROJECT_ROOT / "mysql_data")))
-SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", str(PROJECT_ROOT / "scripts")))
+# 历史变量名；一体镜像内备份入口为 python3 -m mysql_backup（PYTHONPATH=/opt/mysql-backup/src）
+SCRIPTS_DIR = Path(os.environ.get("SCRIPTS_DIR", "/opt/mysql-backup/src/mysql_backup"))
 MYSQL_CONFIG_DIR = Path(os.environ.get("MYSQL_CONFIG_DIR", str(PROJECT_ROOT / "mysql_config")))
 BACKUP_ENV_FILE = BACKUP_BASE_DIR / "backup.env"
 # 浏览器直连对象存储时使用的外网 Endpoint（可选，如 s3.example.com）

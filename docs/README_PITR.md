@@ -30,7 +30,7 @@
 # 恢复到指定时间点（自动查找最新的全量备份和相关增量备份）
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00"
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00"
 ```
 
 **方式 B：直接调用 Python 脚本**
@@ -39,7 +39,7 @@ docker-compose run --rm \
 # 恢复到指定时间点（自动查找最新的全量备份和相关增量备份）
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00"
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00"
 ```
 
 ### 指定全量备份
@@ -50,7 +50,7 @@ docker-compose run --rm \
 # 使用指定的全量备份
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00" 20251126_020000
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00" 20251126_020000
 ```
 
 **方式 B：直接调用 Python 脚本**
@@ -59,7 +59,7 @@ docker-compose run --rm \
 # 使用指定的全量备份
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00" 20251126_020000
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00" 20251126_020000
 ```
 
 ### 指定全量备份和增量备份
@@ -70,7 +70,7 @@ docker-compose run --rm \
 # 使用指定的全量备份和增量备份
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00" 20251126_020000 backup_20251126_030000.tar.gz backup_20251126_040000.tar.gz
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00" 20251126_020000 backup_20251126_030000.tar.gz backup_20251126_040000.tar.gz
 ```
 
 **方式 B：直接调用 Python 脚本**
@@ -79,7 +79,7 @@ docker-compose run --rm \
 # 使用指定的全量备份和增量备份
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py \
+  mysql python3 -m mysql_backup restore pitr \
   "2025-11-26 14:30:00" \
   20251126_020000 \
   backup_20251126_030000.tar.gz \
@@ -102,7 +102,7 @@ docker-compose stop mysql
 # 恢复到 2025-11-26 14:30:00
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:30:00"
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00"
 ```
 
 **方式 B：直接调用 Python 脚本**
@@ -111,7 +111,7 @@ docker-compose run --rm \
 # 恢复到 2025-11-26 14:30:00
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/tasks/restore/point_in_time_restore.py "2025-11-26 14:30:00"
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:30:00"
 ```
 
 ### 3. 启动 MySQL
@@ -238,7 +238,7 @@ TARGET_TIME=$(date -d "1 hour ago" "+%Y-%m-%d %H:%M:%S")
 docker-compose stop mysql
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "$TARGET_TIME"
+  mysql python3 -m mysql_backup restore pitr "$TARGET_TIME"
 docker-compose start mysql
 ```
 
@@ -251,7 +251,7 @@ docker-compose start mysql
 docker-compose stop mysql
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "2025-11-26 14:29:59"
+  mysql python3 -m mysql_backup restore pitr "2025-11-26 14:29:59"
 docker-compose start mysql
 ```
 
@@ -263,7 +263,7 @@ YESTERDAY=$(date -d "yesterday" "+%Y-%m-%d")
 docker-compose stop mysql
 docker-compose run --rm \
   -e RESTORE_TZ="Asia/Shanghai" \
-  mysql python3 /scripts/main.py restore pitr "$YESTERDAY 14:30:00"
+  mysql python3 -m mysql_backup restore pitr "$YESTERDAY 14:30:00"
 docker-compose start mysql
 ```
 

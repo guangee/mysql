@@ -7,7 +7,7 @@ from celery import shared_task
 from django.db import close_old_connections
 from django.utils import timezone
 
-from apps.core.docker_client import get_mysql_host_stats
+from apps.core.ops_runner import get_mysql_host_stats
 from apps.core.metrics import (
     record_database_metrics,
     record_host_metrics,

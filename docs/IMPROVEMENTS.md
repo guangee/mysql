@@ -122,7 +122,7 @@ awk '/^### INSERT INTO.*timestamp_test/ { ... }'
 ### 改进后（通用）：
 ```bash
 # 恢复所有表
-docker-compose exec mysql python3 /scripts/tasks/binlog/apply_binlog_universal.py \
+docker-compose exec mysql python3 -m mysql_backup binlog apply-universal \
     /backups/binlog_backup_*/mysql-bin.000004 \
     '2025-11-27 16:15:54' \
     testdb

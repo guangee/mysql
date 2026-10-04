@@ -1,3 +1,5 @@
+# Legacy：旧版「独立 console 容器」镜像。
+# 官方交付请使用仓库根目录 docker/Dockerfile --target allinone（见 ./run.sh / docker compose）。
 # ---------- 前端构建 ----------
 FROM hub.coding-space.cn/library/node:20-alpine AS frontend-builder
 

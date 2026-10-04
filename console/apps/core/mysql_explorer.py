@@ -9,7 +9,12 @@ from typing import Any
 from django.conf import settings
 from django.http import HttpResponse
 
-from apps.core.mysql_client import MySQLClientError, _validate_db_name, mysql_cursor
+from apps.core.mysql_client import (
+    MySQLClientError,
+    _validate_db_name,
+    database_exists,
+    mysql_cursor,
+)
 
 _FORBIDDEN_SQL = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|REPLACE|GRANT|REVOKE|"
@@ -28,12 +33,6 @@ def _ensure_business_database(name: str) -> None:
     _validate_db_name(name)
     if not database_exists(name):
         raise ValueError(f"数据库 {name} 不存在")
-
-
-def database_exists(name: str) -> bool:
-    from apps.core.mysql_client import database_exists as _exists
-
-    return _exists(name)
 
 
 def get_database_overview(name: str) -> dict:

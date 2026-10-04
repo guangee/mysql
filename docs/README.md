@@ -1,5 +1,8 @@
 # 文档索引
 
+> 命令入口已统一为 `python3 -m mysql_backup …`（一体镜像内）。旧文档中的 `/scripts/...` 路径已过时。
+> 部署入口：`docker compose up -d` 或仓库根目录 `./run.sh`（构建 `docker/Dockerfile --target allinone`）。
+
 | 文档 | 说明 |
 |------|------|
 | [README_PITR.md](README_PITR.md) | 时间点恢复（PITR）说明 |
@@ -10,8 +13,8 @@
 | [IMPROVEMENTS.md](IMPROVEMENTS.md) | 改进记录 |
 | [fix_mysql_connection.md](fix_mysql_connection.md) | MySQL 连接问题排查 |
 | [test3_failure_analysis.md](test3_failure_analysis.md) | test3 失败分析 |
-| [README_PYTHON_MIGRATION.md](README_PYTHON_MIGRATION.md) | Shell → Python 迁移说明 |
-| [CONVERSION_SUMMARY.md](CONVERSION_SUMMARY.md) | 转换摘要 |
-| [FINAL_CONVERSION_REPORT.md](FINAL_CONVERSION_REPORT.md) | 转换完成报告 |
+| [README_PYTHON_MIGRATION.md](README_PYTHON_MIGRATION.md) | Shell → Python 迁移说明（历史） |
+| [CONVERSION_SUMMARY.md](CONVERSION_SUMMARY.md) | 转换摘要（历史） |
+| [FINAL_CONVERSION_REPORT.md](FINAL_CONVERSION_REPORT.md) | 转换完成报告（历史） |
 
 主文档见仓库根目录 [README.md](../README.md)。

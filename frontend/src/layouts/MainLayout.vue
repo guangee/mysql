@@ -8,7 +8,7 @@
       <el-menu :default-active="activeMenu" router background-color="#1e293b" text-color="#cbd5e1" active-text-color="#fff">
         <el-menu-item index="/">
           <el-icon><Odometer /></el-icon>
-          <span>概览</span>
+          <span>监控中心</span>
         </el-menu-item>
         <el-menu-item index="/databases">
           <el-icon><Coin /></el-icon>

@@ -8,26 +8,26 @@
 
 ```bash
 # 恢复备份（下载、解压、准备）
-docker-compose run --rm mysql python3 /scripts/main.py restore backup backup_20251126_061546
+docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546
 
 # 或者使用完整文件名
-docker-compose run --rm mysql python3 /scripts/main.py restore backup backup_20251126_061546.tar.gz
+docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546.tar.gz
 
 # 或者只使用时间戳
-docker-compose run --rm mysql python3 /scripts/main.py restore backup 20251126_061546
+docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251126_061546
 ```
 
 **方式 B：直接调用 Python 脚本**
 
 ```bash
 # 恢复备份（下载、解压、准备）
-docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py backup_20251126_061546
+docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546
 
 # 或者使用完整文件名
-docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py backup_20251126_061546.tar.gz
+docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546.tar.gz
 
 # 或者只使用时间戳
-docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py 20251126_061546
+docker-compose run --rm mysql python3 -m mysql_backup restore backup 20251126_061546
 ```
 
 ### 2. 停止 MySQL 服务
@@ -42,26 +42,26 @@ docker-compose stop mysql
 
 ```bash
 # 使用默认设置（备份现有数据，使用 copy-back）
-docker-compose run --rm mysql python3 /scripts/main.py restore apply /backups/restore
+docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 使用 move-back（恢复后删除恢复目录中的备份）
-USE_MOVE_BACK=true docker-compose run --rm mysql python3 /scripts/main.py restore apply /backups/restore
+USE_MOVE_BACK=true docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 不备份现有数据
-BACKUP_EXISTING_DATA=false docker-compose run --rm mysql python3 /scripts/main.py restore apply /backups/restore
+BACKUP_EXISTING_DATA=false docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 ```
 
 **方式 B：直接调用 Python 脚本**
 
 ```bash
 # 使用默认设置（备份现有数据，使用 copy-back）
-docker-compose run --rm mysql python3 /scripts/tasks/restore/apply_restore.py /backups/restore
+docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 使用 move-back（恢复后删除恢复目录中的备份）
-USE_MOVE_BACK=true docker-compose run --rm mysql python3 /scripts/tasks/restore/apply_restore.py /backups/restore
+USE_MOVE_BACK=true docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 不备份现有数据
-BACKUP_EXISTING_DATA=false docker-compose run --rm mysql python3 /scripts/tasks/restore/apply_restore.py /backups/restore
+BACKUP_EXISTING_DATA=false docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 ```
 
 ### 4. 启动 MySQL 服务
@@ -87,16 +87,16 @@ docker-compose exec mysql mysql -uroot -prootpassword -e "SHOW DATABASES;"
 docker-compose stop mysql
 
 # 2. 从 S3 恢复备份（使用统一入口）
-docker-compose run --rm mysql python3 /scripts/main.py restore backup backup_20251126_061546
+docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546
 
 # 或直接调用 Python 脚本
-# docker-compose run --rm mysql python3 /scripts/tasks/restore/restore_backup.py backup_20251126_061546
+# docker-compose run --rm mysql python3 -m mysql_backup restore backup backup_20251126_061546
 
 # 3. 应用恢复（使用统一入口）
-docker-compose run --rm mysql python3 /scripts/main.py restore apply /backups/restore
+docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 或直接调用 Python 脚本
-# docker-compose run --rm mysql python3 /scripts/tasks/restore/apply_restore.py /backups/restore
+# docker-compose run --rm mysql python3 -m mysql_backup restore apply /backups/restore
 
 # 4. 启动 MySQL
 docker-compose start mysql

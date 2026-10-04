@@ -1,0 +1,80 @@
+"""按域拆分的 API 视图；对外仍从 apps.api.views 导入。"""
+
+from apps.api.views.auth import HealthView, LoginView, MeView
+from apps.api.views.dashboard import DashboardView
+from apps.api.views.databases import (
+    DatabaseDetailView,
+    DatabaseExportView,
+    DatabaseListView,
+    DatabaseMetricsView,
+    DatabaseQueryView,
+    DatabaseSchemaChangesView,
+    DatabaseTableStructureView,
+)
+from apps.api.views.accounts import (
+    BusinessAccountListView,
+    BusinessPasswordChangeView,
+    SystemAccountListView,
+    SystemPasswordChangeView,
+)
+from apps.api.views.backups import (
+    BackupCleanupJobListView,
+    BackupCleanupTriggerView,
+    BackupDownloadProxyView,
+    BackupDownloadView,
+    BackupFileListView,
+    BackupFullRestoreJobListView,
+    BackupFullRestoreTriggerView,
+    BackupJobViewSet,
+    BackupLogView,
+    BackupPitrJobListView,
+    BackupPitrOptionsView,
+    BackupPitrPreviewView,
+    BackupPitrTriggerView,
+    BackupRetentionView,
+    BackupUploadView,
+    DatabasePitrJobListView,
+    DatabasePitrPreviewView,
+    DatabasePitrTriggerView,
+)
+from apps.api.views.mysql_admin import MySQLServiceView, MySQLSettingsView
+from apps.api.views.storages import StorageBackendViewSet
+
+__all__ = [
+    "HealthView",
+    "LoginView",
+    "MeView",
+    "DashboardView",
+    "DatabaseDetailView",
+    "DatabaseExportView",
+    "DatabaseListView",
+    "DatabaseMetricsView",
+    "DatabaseQueryView",
+    "DatabaseSchemaChangesView",
+    "DatabaseTableStructureView",
+    "BusinessAccountListView",
+    "BusinessPasswordChangeView",
+    "SystemAccountListView",
+    "SystemPasswordChangeView",
+    "BackupCleanupJobListView",
+    "BackupCleanupTriggerView",
+    "BackupDownloadProxyView",
+    "BackupDownloadView",
+    "BackupFileListView",
+    "BackupFullRestoreJobListView",
+    "BackupFullRestoreTriggerView",
+    "BackupJobViewSet",
+    "BackupLogView",
+    "BackupPitrJobListView",
+    "BackupPitrOptionsView",
+    "BackupPitrPreviewView",
+    "BackupPitrTriggerView",
+    "BackupRetentionView",
+    "BackupUploadView",
+    "DatabasePitrJobListView",
+    "DatabasePitrPreviewView",
+    "DatabasePitrTriggerView",
+    "MySQLServiceView",
+    "MySQLSettingsView",
+    "StorageBackendViewSet",
+]

@@ -83,13 +83,13 @@
 
 ```bash
 # 原方式（Shell 脚本，已废弃）
-docker-compose exec mysql /scripts/full-backup.sh
+docker-compose exec mysql python3 -m mysql_backup backup full
 
 # 新方式1：使用统一入口（推荐）
-docker-compose exec mysql python3 /scripts/main.py backup full
+docker-compose exec mysql python3 -m mysql_backup backup full
 
 # 新方式2：直接调用 Python 脚本（完全等价）
-docker-compose exec mysql python3 /scripts/tasks/backup/full_backup.py
+docker-compose exec mysql python3 -m mysql_backup backup full
 ```
 
 ### 测试脚本已更新
