@@ -30,7 +30,10 @@ http.interceptors.response.use(
         router.push('/login')
       }
     } else if (status === 503) {
-      ElMessage.warning(detail || 'MySQL 暂不可用，请稍后重试')
+      const url = String(error.config?.url || '')
+      if (!url.includes('/healthz')) {
+        ElMessage.warning(detail || 'MySQL 暂不可用，请稍后重试')
+      }
     } else if (detail) {
       ElMessage.error(typeof detail === 'string' ? detail : JSON.stringify(detail))
     } else if (error.message) {

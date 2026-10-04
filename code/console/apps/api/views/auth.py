@@ -172,6 +172,7 @@ class HealthView(APIView):
 
     def get(self, request):
         from apps.core.runtime import is_allinone, runtime_mode
+        from apps.core.versions import collect_versions
 
         mysql_ok = False
         mysql_error = ""
@@ -183,12 +184,19 @@ class HealthView(APIView):
         except Exception as exc:
             mysql_error = str(exc)[:200]
 
+        versions = collect_versions()
         payload = {
             "ok": mysql_ok,
             "runtime_mode": runtime_mode(),
             "allinone": is_allinone(),
-            "mysql": {"ready": mysql_ok, "error": mysql_error},
-            "console": {"ok": True},
+            "mysql": {
+                "ready": mysql_ok,
+                "error": mysql_error,
+                "version": versions.get("mysql") or "",
+            },
+            "console": {"ok": True, "version": versions.get("app") or ""},
+            "redis": {"version": versions.get("redis") or ""},
+            "versions": versions,
         }
         code = status.HTTP_200_OK if mysql_ok else status.HTTP_503_SERVICE_UNAVAILABLE
         return Response(payload, status=code)

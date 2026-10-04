@@ -5,7 +5,7 @@
         <el-button link type="primary" @click="router.push('/dts')">返回列表</el-button>
         <h2 class="page-title">{{ task.name || '同步详情' }}</h2>
         <div class="page-hint" v-if="task.id">
-          {{ task.source_database || '-' }} → {{ task.target_host }}:{{ task.target_port }}/{{ task.target_database || '-' }}
+          {{ task.source_database || '-' }} → {{ task.connection?.name || `${task.target_host}:${task.target_port}` }}/{{ task.target_database || '-' }}
         </div>
       </div>
       <div class="actions">

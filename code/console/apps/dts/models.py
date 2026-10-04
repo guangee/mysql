@@ -12,8 +12,44 @@ STATUS_CHOICES = [
 ]
 
 
+class DtsConnection(models.Model):
+    name = models.CharField("名称", max_length=64, unique=True)
+    host = models.CharField("地址", max_length=255)
+    port = models.PositiveIntegerField("端口", default=3306)
+    user = models.CharField("账号", max_length=64)
+    password_enc = models.TextField("密码", blank=True, default="")
+    remark = models.CharField("备注", max_length=255, blank=True, default="")
+    mysql_version = models.CharField("版本", max_length=64, blank=True, default="")
+    last_ok_at = models.DateTimeField("最近连通", null=True, blank=True)
+    last_error = models.CharField("最近错误", max_length=255, blank=True, default="")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+
+    class Meta:
+        verbose_name = "远程数据库连接"
+        verbose_name_plural = "远程数据库连接"
+        ordering = ["-created_at"]
+
+    def set_password(self, raw: str) -> None:
+        self.password_enc = encrypt_value(raw or "")
+
+    def get_password(self) -> str:
+        return decrypt_value(self.password_enc)
+
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}"
+
+
 class DtsTask(models.Model):
     name = models.CharField("名称", max_length=64, unique=True)
+    connection = models.ForeignKey(
+        DtsConnection,
+        verbose_name="远程连接",
+        related_name="tasks",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
     target_host = models.CharField("目标地址", max_length=255)
     target_port = models.PositiveIntegerField("目标端口", default=3306)
     target_user = models.CharField("目标账号", max_length=64)
@@ -52,6 +88,22 @@ class DtsTask(models.Model):
 
     def get_password(self) -> str:
         return decrypt_value(self.password_enc)
+
+    def apply_connection(self, connection: DtsConnection | None = None) -> None:
+        conn = connection or self.connection
+        if not conn:
+            return
+        self.connection = conn
+        self.target_host = conn.host
+        self.target_port = conn.port
+        self.target_user = conn.user
+        self.password_enc = conn.password_enc
+
+    def target_endpoint(self) -> tuple[str, int, str, str]:
+        if self.connection_id:
+            conn = self.connection
+            return conn.host, conn.port, conn.user, conn.get_password()
+        return self.target_host, self.target_port, self.target_user, self.get_password()
 
     def source_database_name(self) -> str:
         names = self.allowed_databases()

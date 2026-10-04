@@ -43,6 +43,13 @@ export const mysqlApi = {
 
 export const dtsApi = {
   databases: () => http.get('/dts/databases/'),
+  connections: () => http.get('/dts/connections/'),
+  createConnection: (data) => http.post('/dts/connections/', data),
+  updateConnection: (id, data) => http.patch(`/dts/connections/${id}/`, data),
+  removeConnection: (id) => http.delete(`/dts/connections/${id}/`),
+  testSavedConnection: (id) => http.post(`/dts/connections/${id}/test/`),
+  connectionDatabases: (id) => http.get(`/dts/connections/${id}/databases/`),
+  createRemoteDatabase: (id, data) => http.post(`/dts/connections/${id}/databases/`, data),
   tasks: () => http.get('/dts/tasks/'),
   createTask: (data) => http.post('/dts/tasks/', data),
   updateTask: (id, data) => http.patch(`/dts/tasks/${id}/`, data),

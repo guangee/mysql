@@ -246,6 +246,84 @@ def _list_databases(cur) -> list[str]:
     return names
 
 
+def inspect_target_databases(host: str, port: int, user: str, password: str) -> list[dict]:
+    try:
+        conn = _connect_target(host, port, user, password)
+    except MySQLdb.Error as exc:
+        raise DtsError(f"连接目标库失败: {exc}") from exc
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT s.SCHEMA_NAME,
+                   s.DEFAULT_CHARACTER_SET_NAME,
+                   COUNT(t.TABLE_NAME),
+                   COALESCE(SUM(t.DATA_LENGTH + t.INDEX_LENGTH), 0)
+            FROM information_schema.SCHEMATA s
+            LEFT JOIN information_schema.TABLES t
+              ON t.TABLE_SCHEMA = s.SCHEMA_NAME AND t.TABLE_TYPE = 'BASE TABLE'
+            WHERE s.SCHEMA_NAME NOT IN ('information_schema','performance_schema','mysql','sys')
+            GROUP BY s.SCHEMA_NAME, s.DEFAULT_CHARACTER_SET_NAME
+            ORDER BY s.SCHEMA_NAME
+            """
+        )
+        items = []
+        for name, charset, tables, size in cur.fetchall():
+            schema = _as_text(name)
+            if not _DB_NAME_RE.match(schema) or schema in settings.SYSTEM_DB_NAMES:
+                continue
+            items.append(
+                {
+                    "name": schema,
+                    "charset": _as_text(charset) or "utf8mb4",
+                    "table_count": int(tables or 0),
+                    "size_bytes": int(size or 0),
+                }
+            )
+        return items
+    finally:
+        conn.close()
+
+
+def create_target_database(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    name: str,
+    charset: str = "utf8mb4",
+) -> dict:
+    schema = validate_database_name(name)
+    charset = (charset or "utf8mb4").strip().lower()
+    collation_map = {
+        "utf8mb4": "utf8mb4_unicode_ci",
+        "utf8": "utf8_general_ci",
+        "latin1": "latin1_swedish_ci",
+    }
+    if charset not in collation_map:
+        raise DtsError("不支持的字符集")
+    collation = collation_map[charset]
+    try:
+        conn = _connect_target(host, port, user, password)
+    except MySQLdb.Error as exc:
+        raise DtsError(f"连接目标库失败: {exc}") from exc
+    try:
+        cur = conn.cursor()
+        cur.execute("SHOW DATABASES")
+        existing = {_as_text(row[0]) for row in cur.fetchall()}
+        if schema in existing:
+            raise DtsError(f"远程库 {schema} 已存在")
+        cur.execute(
+            f"CREATE DATABASE `{schema}` CHARACTER SET %s COLLATE %s",
+            (charset, collation),
+        )
+    except MySQLdb.Error as exc:
+        raise DtsError(f"创建远程库失败: {exc}") from exc
+    finally:
+        conn.close()
+    return {"name": schema, "charset": charset, "collation": collation}
+
+
 def _rewrite_database(sql: str, source: str, target: str) -> str:
     if not source or source == target:
         return sql
@@ -522,8 +600,9 @@ def run_full_sync(task_id: int) -> None:
 
     stats = inspect_source_database(source_db)
     assign_inventory(task, stats, reset_progress=True)
+    host, port, user, password = task.target_endpoint()
     task.append_log(
-        f"开始全量同步: {source_db} -> {task.target_host}:{task.target_port}/{target_db}，"
+        f"开始全量同步: {source_db} -> {host}:{port}/{target_db}，"
         f"{task.table_total} 张表，约 {task.rows_total} 行，{format_bytes(task.bytes_total)}"
     )
     task.full_phase = "export"
@@ -537,7 +616,7 @@ def run_full_sync(task_id: int) -> None:
     conn = None
     try:
         position, streamed = _dump_snapshot(task, source_db, dump_path)
-        conn = _connect_target(task.target_host, task.target_port, task.target_user, task.get_password())
+        conn = _connect_target(*task.target_endpoint())
         cur = conn.cursor()
         _prepare_session(cur)
         _apply_structure(task, cur, dump_path, source_db, target_db, records)
@@ -616,7 +695,7 @@ def advance_incremental(task_id: int, max_events: int = 2000) -> int:
             use_column_name_cache=True,
             enable_logging=False,
         )
-        conn = _connect_target(task.target_host, task.target_port, task.target_user, task.get_password())
+        conn = _connect_target(*task.target_endpoint())
         cur = conn.cursor()
         _prepare_session(cur)
         for event in stream:

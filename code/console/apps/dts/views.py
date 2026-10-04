@@ -1,3 +1,5 @@
+from django.db.models import Count
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -6,12 +8,22 @@ from rest_framework.views import APIView
 from apps.api.permissions import IsSuperUser, get_client_ip
 from apps.core.models import AuditLog
 from apps.dts.events import list_sql_events
-from apps.dts.models import DtsTask
-from apps.dts.serializers import DtsTableSyncSerializer, DtsTaskSerializer, DtsTaskWriteSerializer, DtsTestConnectionSerializer
+from apps.dts.models import DtsConnection, DtsTask
+from apps.dts.serializers import (
+    DtsConnectionSerializer,
+    DtsConnectionWriteSerializer,
+    DtsCreateDatabaseSerializer,
+    DtsTableSyncSerializer,
+    DtsTaskSerializer,
+    DtsTaskWriteSerializer,
+    DtsTestConnectionSerializer,
+)
 from apps.dts.sync import (
     DtsError,
     assign_inventory,
+    create_target_database,
     inspect_source_database,
+    inspect_target_databases,
     list_source_databases,
     replace_table_rows,
     test_target_connection,
@@ -23,6 +35,20 @@ def _require_superuser(request):
     if not IsSuperUser().has_permission(request, None):
         return Response({"detail": "需要超级管理员权限"}, status=status.HTTP_403_FORBIDDEN)
     return None
+
+
+def _annotate_connections(qs):
+    return qs.annotate(task_count=Count("tasks"))
+
+
+def _probe_connection(connection: DtsConnection, password: str | None = None) -> dict:
+    secret = password if password is not None else connection.get_password()
+    result = test_target_connection(connection.host, connection.port, connection.user, secret)
+    connection.mysql_version = str(result.get("version") or "")[:64]
+    connection.last_ok_at = timezone.now()
+    connection.last_error = ""
+    connection.save(update_fields=["mysql_version", "last_ok_at", "last_error", "updated_at"])
+    return result
 
 
 class DtsDatabaseListView(APIView):
@@ -57,11 +83,185 @@ class DtsTestConnectionView(APIView):
         return Response(result)
 
 
+class DtsConnectionListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        items = _annotate_connections(DtsConnection.objects.all())
+        return Response({"items": DtsConnectionSerializer(items, many=True).data})
+
+    def post(self, request):
+        denied = _require_superuser(request)
+        if denied:
+            return denied
+        serializer = DtsConnectionWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if not data.get("password"):
+            return Response({"detail": "请填写远程库密码"}, status=status.HTTP_400_BAD_REQUEST)
+        if DtsConnection.objects.filter(name=data["name"]).exists():
+            return Response({"detail": "连接名称已存在"}, status=status.HTTP_400_BAD_REQUEST)
+        connection = DtsConnection(
+            name=data["name"],
+            host=data["host"],
+            port=data["port"],
+            user=data["user"],
+            remark=data.get("remark") or "",
+        )
+        connection.set_password(data["password"])
+        try:
+            _probe_connection(connection, data["password"])
+        except DtsError as exc:
+            connection.last_error = str(exc)[:255]
+        connection.save()
+        AuditLog.objects.create(
+            action="dts_connection_create",
+            target=connection.name,
+            operator=request.user,
+            ip_address=get_client_ip(request),
+        )
+        connection.task_count = 0
+        return Response(DtsConnectionSerializer(connection).data, status=status.HTTP_201_CREATED)
+
+
+class DtsConnectionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        connection = _annotate_connections(DtsConnection.objects.filter(pk=connection_id)).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(DtsConnectionSerializer(connection).data)
+
+    def patch(self, request, connection_id: int):
+        denied = _require_superuser(request)
+        if denied:
+            return denied
+        connection = DtsConnection.objects.filter(pk=connection_id).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = DtsConnectionWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if DtsConnection.objects.exclude(pk=connection.id).filter(name=data["name"]).exists():
+            return Response({"detail": "连接名称已存在"}, status=status.HTTP_400_BAD_REQUEST)
+        connection.name = data["name"]
+        connection.host = data["host"]
+        connection.port = data["port"]
+        connection.user = data["user"]
+        connection.remark = data.get("remark") or ""
+        if data.get("password"):
+            connection.set_password(data["password"])
+        connection.save()
+        for task in connection.tasks.exclude(status__in=["full_sync", "incremental"]):
+            task.apply_connection(connection)
+            task.save(update_fields=["target_host", "target_port", "target_user", "password_enc", "updated_at"])
+        AuditLog.objects.create(
+            action="dts_connection_update",
+            target=connection.name,
+            operator=request.user,
+            ip_address=get_client_ip(request),
+        )
+        connection.task_count = connection.tasks.count()
+        return Response(DtsConnectionSerializer(connection).data)
+
+    def delete(self, request, connection_id: int):
+        denied = _require_superuser(request)
+        if denied:
+            return denied
+        connection = DtsConnection.objects.filter(pk=connection_id).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        running = connection.tasks.filter(status__in=["full_sync", "incremental"]).exists()
+        if running:
+            return Response({"detail": "有同步任务正在运行，不能删除连接"}, status=status.HTTP_409_CONFLICT)
+        if connection.tasks.exists():
+            return Response({"detail": "请先删除使用该连接的同步策略"}, status=status.HTTP_409_CONFLICT)
+        name = connection.name
+        connection.delete()
+        AuditLog.objects.create(
+            action="dts_connection_delete",
+            target=name,
+            operator=request.user,
+            ip_address=get_client_ip(request),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DtsConnectionTestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, connection_id: int):
+        denied = _require_superuser(request)
+        if denied:
+            return denied
+        connection = DtsConnection.objects.filter(pk=connection_id).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            result = _probe_connection(connection)
+        except DtsError as exc:
+            connection.last_error = str(exc)[:255]
+            connection.save(update_fields=["last_error", "updated_at"])
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        databases = inspect_target_databases(
+            connection.host, connection.port, connection.user, connection.get_password()
+        )
+        result["databases"] = [item["name"] for item in databases]
+        result["database_items"] = databases
+        return Response(result)
+
+
+class DtsConnectionDatabaseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, connection_id: int):
+        connection = DtsConnection.objects.filter(pk=connection_id).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            items = inspect_target_databases(
+                connection.host, connection.port, connection.user, connection.get_password()
+            )
+        except DtsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"items": items})
+
+    def post(self, request, connection_id: int):
+        denied = _require_superuser(request)
+        if denied:
+            return denied
+        connection = DtsConnection.objects.filter(pk=connection_id).first()
+        if not connection:
+            return Response({"detail": "连接不存在"}, status=status.HTTP_404_NOT_FOUND)
+        serializer = DtsCreateDatabaseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            created = create_target_database(
+                connection.host,
+                connection.port,
+                connection.user,
+                connection.get_password(),
+                data["name"],
+                data.get("charset") or "utf8mb4",
+            )
+        except DtsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        AuditLog.objects.create(
+            action="dts_remote_create_db",
+            target=f"{connection.name}/{created['name']}",
+            operator=request.user,
+            ip_address=get_client_ip(request),
+        )
+        return Response(created, status=status.HTTP_201_CREATED)
+
+
 class DtsTaskListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        tasks = list(DtsTask.objects.all())
+        tasks = list(DtsTask.objects.select_related("connection").all())
         changed = []
         for task in tasks:
             if task.status in {"full_sync", "incremental"}:
@@ -92,19 +292,17 @@ class DtsTaskListCreateView(APIView):
         serializer = DtsTaskWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        if not data.get("password"):
-            return Response({"detail": "请填写目标库密码"}, status=status.HTTP_400_BAD_REQUEST)
+        connection = DtsConnection.objects.filter(pk=data["connection_id"]).first()
+        if not connection:
+            return Response({"detail": "请先创建远程连接"}, status=status.HTTP_400_BAD_REQUEST)
         if DtsTask.objects.filter(name=data["name"]).exists():
-            return Response({"detail": "任务名称已存在"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "策略名称已存在"}, status=status.HTTP_400_BAD_REQUEST)
         task = DtsTask(
             name=data["name"],
-            target_host=data["target_host"],
-            target_port=data["target_port"],
-            target_user=data["target_user"],
             databases=[data["source_database"]],
             target_database=data["target_database"],
         )
-        task.set_password(data["password"])
+        task.apply_connection(connection)
         stats = None
         try:
             stats = inspect_source_database(data["source_database"])
@@ -130,7 +328,7 @@ class DtsTaskDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, task_id: int):
-        task = DtsTask.objects.filter(pk=task_id).first()
+        task = DtsTask.objects.select_related("connection").filter(pk=task_id).first()
         if not task:
             return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
         if (
@@ -151,25 +349,11 @@ class DtsTaskDetailView(APIView):
             "tables": DtsTableSyncSerializer(tables, many=True).data,
         })
 
-
-class DtsTaskSqlEventsView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request, task_id: int):
-        task = DtsTask.objects.filter(pk=task_id).first()
-        if not task:
-            return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
-        try:
-            limit = int(request.query_params.get("limit") or 200)
-        except (TypeError, ValueError):
-            limit = 200
-        return Response(list_sql_events(task.id, limit=limit))
-
     def patch(self, request, task_id: int):
         denied = _require_superuser(request)
         if denied:
             return denied
-        task = DtsTask.objects.filter(pk=task_id).first()
+        task = DtsTask.objects.select_related("connection").filter(pk=task_id).first()
         if not task:
             return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
         if task.status in {"full_sync", "incremental"}:
@@ -177,15 +361,14 @@ class DtsTaskSqlEventsView(APIView):
         serializer = DtsTaskWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        connection = DtsConnection.objects.filter(pk=data["connection_id"]).first()
+        if not connection:
+            return Response({"detail": "请先创建远程连接"}, status=status.HTTP_400_BAD_REQUEST)
         task.name = data["name"]
-        task.target_host = data["target_host"]
-        task.target_port = data["target_port"]
-        task.target_user = data["target_user"]
         task.databases = [data["source_database"]]
         task.target_database = data["target_database"]
-        if data.get("password"):
-            task.set_password(data["password"])
-        task.append_log("任务配置已更新")
+        task.apply_connection(connection)
+        task.append_log("同步策略已更新")
         task.save()
         return Response(DtsTaskSerializer(task).data)
 
@@ -193,7 +376,7 @@ class DtsTaskSqlEventsView(APIView):
         denied = _require_superuser(request)
         if denied:
             return denied
-        task = DtsTask.objects.filter(pk=task_id).first()
+        task = DtsTask.objects.select_related("connection").filter(pk=task_id).first()
         if not task:
             return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
         if task.status in {"full_sync", "incremental"}:
@@ -209,6 +392,20 @@ class DtsTaskSqlEventsView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class DtsTaskSqlEventsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, task_id: int):
+        task = DtsTask.objects.select_related("connection").filter(pk=task_id).first()
+        if not task:
+            return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            limit = int(request.query_params.get("limit") or 200)
+        except (TypeError, ValueError):
+            limit = 200
+        return Response(list_sql_events(task.id, limit=limit))
+
+
 class DtsTaskActionView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -216,7 +413,7 @@ class DtsTaskActionView(APIView):
         denied = _require_superuser(request)
         if denied:
             return denied
-        task = DtsTask.objects.filter(pk=task_id).first()
+        task = DtsTask.objects.select_related("connection").filter(pk=task_id).first()
         if not task:
             return Response({"detail": "任务不存在"}, status=status.HTTP_404_NOT_FOUND)
         if action == "start":

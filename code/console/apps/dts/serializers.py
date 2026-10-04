@@ -1,25 +1,80 @@
 from rest_framework import serializers
 
-from apps.dts.models import DtsTask, DtsTableSync
+from apps.dts.models import DtsConnection, DtsTask, DtsTableSync
 from apps.dts.sync import DtsError, validate_database_name
+
+
+class DtsConnectionSerializer(serializers.ModelSerializer):
+    task_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = DtsConnection
+        fields = [
+            "id",
+            "name",
+            "host",
+            "port",
+            "user",
+            "remark",
+            "mysql_version",
+            "last_ok_at",
+            "last_error",
+            "task_count",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class DtsConnectionWriteSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64)
+    host = serializers.CharField(max_length=255)
+    port = serializers.IntegerField(min_value=1, max_value=65535, default=3306)
+    user = serializers.CharField(max_length=64)
+    password = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    remark = serializers.CharField(max_length=255, required=False, allow_blank=True)
+
+    def validate_host(self, value):
+        host = value.strip()
+        if not host or any(ch.isspace() for ch in host):
+            raise serializers.ValidationError("地址不合法")
+        return host
+
+
+class DtsCreateDatabaseSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=64)
+    charset = serializers.ChoiceField(
+        choices=["utf8mb4", "utf8", "latin1"],
+        default="utf8mb4",
+        required=False,
+    )
+
+    def validate_name(self, value):
+        try:
+            return validate_database_name(value)
+        except DtsError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
 
 class DtsTaskSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     position = serializers.SerializerMethodField()
     source_database = serializers.SerializerMethodField()
+    connection = DtsConnectionSerializer(read_only=True)
+    direction = serializers.SerializerMethodField()
 
     class Meta:
         model = DtsTask
         fields = [
             "id",
             "name",
+            "connection",
             "target_host",
             "target_port",
             "target_user",
             "databases",
             "source_database",
             "target_database",
+            "direction",
             "status",
             "status_display",
             "binlog_file",
@@ -53,6 +108,9 @@ class DtsTaskSerializer(serializers.ModelSerializer):
     def get_source_database(self, obj):
         return obj.source_database_name()
 
+    def get_direction(self, obj):
+        return "local_to_remote"
+
 
 class DtsTableSyncSerializer(serializers.ModelSerializer):
     phase_display = serializers.CharField(source="get_phase_display", read_only=True)
@@ -85,10 +143,7 @@ class DtsTableSyncSerializer(serializers.ModelSerializer):
 
 class DtsTaskWriteSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=64)
-    target_host = serializers.CharField(max_length=255)
-    target_port = serializers.IntegerField(min_value=1, max_value=65535, default=3306)
-    target_user = serializers.CharField(max_length=64)
-    password = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    connection_id = serializers.IntegerField()
     source_database = serializers.CharField(max_length=64)
     target_database = serializers.CharField(max_length=64)
 
@@ -103,12 +158,6 @@ class DtsTaskWriteSerializer(serializers.Serializer):
             return validate_database_name(value)
         except DtsError as exc:
             raise serializers.ValidationError(str(exc)) from exc
-
-    def validate_target_host(self, value):
-        host = value.strip()
-        if not host or any(ch.isspace() for ch in host):
-            raise serializers.ValidationError("目标地址不合法")
-        return host
 
 
 class DtsTestConnectionSerializer(serializers.Serializer):
